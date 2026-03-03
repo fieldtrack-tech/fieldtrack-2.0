@@ -28,7 +28,7 @@ jobs:
             cd ~/FieldTrack-2.0/backend
 
             echo "Pulling latest code..."
-            git pull origin main
+            git pull origin master
 
             echo "Stopping old container..."
             docker stop fieldtrack || true
