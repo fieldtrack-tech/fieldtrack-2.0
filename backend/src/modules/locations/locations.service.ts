@@ -4,6 +4,8 @@ import { attendanceRepository } from "../attendance/attendance.repository.js";
 import { BadRequestError } from "../../utils/errors.js";
 import type { LocationRecord, CreateLocationBody, CreateLocationBatchBody } from "./locations.schema.js";
 
+import { performance } from "perf_hooks";
+
 /**
  * Location service — business logic for ingesting and retrieving locations.
  * Must verify attendance sessions before operating.
@@ -17,6 +19,7 @@ export const locationsService = {
         request: FastifyRequest,
         body: CreateLocationBody,
     ): Promise<LocationRecord> {
+        const start = performance.now();
         const userId = request.user.sub;
         const isValid = await attendanceRepository.validateSessionActive(request, body.session_id, userId);
 
@@ -26,12 +29,15 @@ export const locationsService = {
             );
         }
 
+        const record = await locationsRepository.createLocation(request, userId, body.session_id, body);
+        const latencyMs = Math.round(performance.now() - start);
+
         request.log.info(
-            { userId, organizationId: request.organizationId, sessionId: body.session_id },
-            "Ingesting new location point",
+            { userId, organizationId: request.organizationId, sessionId: body.session_id, latencyMs },
+            "Ingested new location point",
         );
 
-        return locationsRepository.createLocation(request, userId, body.session_id, body);
+        return record;
     },
 
     /**
@@ -42,6 +48,7 @@ export const locationsService = {
         request: FastifyRequest,
         body: CreateLocationBatchBody,
     ): Promise<number> {
+        const start = performance.now();
         const userId = request.user.sub;
         const isValid = await attendanceRepository.validateSessionActive(request, body.session_id, userId);
 
@@ -58,12 +65,17 @@ export const locationsService = {
             body.points,
         );
 
+        const latencyMs = Math.round(performance.now() - start);
+        const duplicatesSuppressed = body.points.length - insertedCount;
+
         request.log.info(
             {
                 userId,
                 organizationId: request.organizationId,
                 sessionId: body.session_id,
                 insertedCount,
+                duplicatesSuppressed,
+                latencyMs,
             },
             "Ingested batch of location points",
         );
