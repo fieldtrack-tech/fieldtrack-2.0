@@ -1,31 +1,23 @@
 import type { FastifyRequest } from "fastify";
 
 /**
- * Enforces tenant isolation by scoping a query to the
+ * Enforces tenant isolation by scoping a Supabase query to the
  * authenticated user's organization_id.
  *
- * Usage (when Supabase client is wired up):
+ * Uses a structural type that matches Supabase's query builder
+ * without importing its complex generic chain.
  *
+ * Usage:
  *   const query = supabase.from("expenses").select("*");
- *   const scoped = enforceTenant(request, query);
- *   const { data, error } = await scoped;
- *
- * This ensures every data query is automatically filtered
- * to the tenant boundary — preventing cross-org data access.
+ *   const { data, error } = await enforceTenant(request, query);
  */
-
-/**
- * Generic interface matching Supabase's PostgrestFilterBuilder pattern.
- * Using a minimal structural type so we don't need a hard dependency
- * on @supabase/postgrest-js at this stage.
- */
-interface FilterBuilder<T> {
-    eq(column: string, value: string): T;
+interface TenantScopable {
+    eq(column: string, value: string): this;
 }
 
-export function enforceTenant<T extends FilterBuilder<T>>(
+export function enforceTenant<T extends TenantScopable>(
     request: FastifyRequest,
-    query: T
+    query: T,
 ): T {
     return query.eq("organization_id", request.organizationId);
 }

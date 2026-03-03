@@ -29,3 +29,10 @@ export class BadRequestError extends AppError {
         this.name = "BadRequestError";
     }
 }
+
+export class ForbiddenError extends AppError {
+    constructor(message = "Forbidden") {
+        super(message, 403);
+        this.name = "ForbiddenError";
+    }
+}
