@@ -1,11 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# ============================================================
-# FieldTrack 2.0 Blue-Green Deployment Script
-# Zero-downtime Docker deployment
-# ============================================================
-
 IMAGE="ghcr.io/rajashish147/fieldtrack-backend:${1:-latest}"
 
 BLUE_NAME="fieldtrack_backend_blue"
@@ -25,11 +20,9 @@ echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
 echo "========================================="
 
-# Step 1 — Pull latest image
 echo "[1/7] Pulling image..."
 docker pull "$IMAGE"
 
-# Step 2 — Detect active container
 echo "[2/7] Detecting active container..."
 
 if grep -q "127.0.0.1:$BLUE_PORT" "$NGINX_CONF"; then
@@ -53,11 +46,9 @@ fi
 echo "Active container   : $ACTIVE ($ACTIVE_PORT)"
 echo "Inactive container : $INACTIVE ($INACTIVE_PORT)"
 
-# Step 3 — Start inactive container
 echo "[3/7] Starting inactive container..."
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
-    echo "Removing old $INACTIVE_NAME..."
     docker rm -f "$INACTIVE_NAME"
 fi
 
@@ -68,9 +59,6 @@ docker run -d \
   --env-file "$ENV_FILE" \
   "$IMAGE"
 
-echo "Container $INACTIVE_NAME started."
-
-# Step 4 — Wait for health check
 echo "[4/7] Waiting for health check..."
 
 ATTEMPT=0
@@ -79,35 +67,25 @@ until curl -s "http://127.0.0.1:$INACTIVE_PORT/health" | grep -q "ok"; do
     ATTEMPT=$((ATTEMPT+1))
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
-        echo "Health check failed after $MAX_HEALTH_ATTEMPTS attempts."
-        echo "Deployment aborted."
+        echo "Health check failed."
         exit 1
     fi
 
-    echo "Health check not ready... retrying ($ATTEMPT/$MAX_HEALTH_ATTEMPTS)"
     sleep "$HEALTH_INTERVAL"
 done
 
-echo "Health check passed."
-
-# Step 5 — Switch nginx
-echo "[5/7] Switching nginx to $INACTIVE container..."
+echo "[5/7] Switching nginx..."
 
 sudo sed -i "s/127.0.0.1:$ACTIVE_PORT/127.0.0.1:$INACTIVE_PORT/" "$NGINX_CONF"
 
-# Step 6 — Validate and reload nginx
-echo "[6/7] Validating nginx configuration..."
-sudo nginx -t
+echo "[6/7] Reloading nginx..."
 
-echo "Reloading nginx..."
+sudo nginx -t
 sudo systemctl reload nginx
 
-echo "Traffic switched to $INACTIVE container."
+echo "[7/7] Cleaning old container..."
 
-# Step 7 — Remove old container
-echo "[7/7] Removing old container..."
-
-docker rm -f "$ACTIVE_NAME" || echo "Old container already removed."
+docker rm -f "$ACTIVE_NAME" || true
 
 echo "========================================="
 echo "Deployment successful."
