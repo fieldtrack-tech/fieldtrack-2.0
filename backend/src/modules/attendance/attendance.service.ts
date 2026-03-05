@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
-import { enqueueDistanceRecalculation } from "../../workers/queue.js";
+import { enqueueDistanceJob } from "../../workers/distance.queue.js";
 import { BadRequestError } from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
 
@@ -58,9 +58,16 @@ export const attendanceService = {
       openSession.id,
     );
 
-    // Phase 7: Enqueue distance computation asynchronously so check-out is instantaneous.
-    // Pass the request logger so queue depth changes are visible in structured logs.
-    enqueueDistanceRecalculation(closedSession.id, request.log);
+    // Phase 10: Enqueue distance computation into durable BullMQ queue.
+    // Fire-and-forget so check-out is instantaneous.
+    // Job deduplication guaranteed by jobId = sessionId in BullMQ.
+    enqueueDistanceJob(closedSession.id).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      request.log.warn(
+        { sessionId: closedSession.id, error: message },
+        "Failed to enqueue distance job — session summary may be delayed",
+      );
+    });
 
     return closedSession;
   },

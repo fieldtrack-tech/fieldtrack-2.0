@@ -27,7 +27,7 @@ export const analyticsController = {
       const parsed = orgSummaryQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send({ error: `Validation failed: ${issues}` });
+        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
         return;
       }
 
@@ -40,11 +40,11 @@ export const analyticsController = {
       reply.status(200).send({ success: true, data });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error in getOrgSummary");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 
@@ -60,7 +60,7 @@ export const analyticsController = {
       const parsed = userSummaryQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send({ error: `Validation failed: ${issues}` });
+        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
         return;
       }
 
@@ -74,11 +74,11 @@ export const analyticsController = {
       reply.status(200).send({ success: true, data });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error in getUserSummary");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 
@@ -94,7 +94,7 @@ export const analyticsController = {
       const parsed = topPerformersQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send({ error: `Validation failed: ${issues}` });
+        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
         return;
       }
 
@@ -109,11 +109,11 @@ export const analyticsController = {
       reply.status(200).send({ success: true, data });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error in getTopPerformers");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 };

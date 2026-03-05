@@ -1,4 +1,4 @@
-import { supabase } from "../../config/supabase.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { enforceTenant } from "../../utils/tenant.js";
 import type { FastifyRequest } from "fastify";
 import type { SessionSummary } from "./session_summary.schema.js";

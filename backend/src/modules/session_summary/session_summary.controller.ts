@@ -1,6 +1,5 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { sessionSummaryService } from "./session_summary.service.js";
-import { processingTracker } from "../../workers/queue.js";
 import { AppError } from "../../utils/errors.js";
 
 /**
@@ -14,24 +13,19 @@ export const sessionSummaryController = {
         try {
             const { sessionId } = request.params;
 
-            // Phase 7: Guard against triggering recalculation if the background worker is 
-            // already proactively crunching this exact session in the background
-            if (processingTracker.has(sessionId)) {
-                reply.status(409).send({
-                    error: "Session is currently being recalculated in the background. Check back in a few seconds."
-                });
-                return;
-            }
-
             const summary = await sessionSummaryService.calculateAndSave(request, sessionId);
             reply.status(200).send({ success: true, data: summary });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({
+                    success: false,
+                    error: error.message,
+                    requestId: request.id,
+                });
                 return;
             }
             request.log.error(error, "Unexpected error recalculating session summary");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 };

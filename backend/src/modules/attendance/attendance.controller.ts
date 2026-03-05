@@ -13,11 +13,11 @@ export const attendanceController = {
             reply.status(201).send({ success: true, data: session });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error during check-in");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 
@@ -27,11 +27,11 @@ export const attendanceController = {
             reply.status(200).send({ success: true, data: session });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error during check-out");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 
@@ -42,11 +42,11 @@ export const attendanceController = {
             reply.status(200).send({ success: true, data: sessions });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error fetching user sessions");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 
@@ -57,11 +57,11 @@ export const attendanceController = {
             reply.status(200).send({ success: true, data: sessions });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error fetching org sessions");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 };

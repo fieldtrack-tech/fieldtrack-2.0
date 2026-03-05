@@ -7,7 +7,12 @@ interface EnvConfig {
   NODE_ENV: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_ANON_KEY: string;
   SUPABASE_JWT_SECRET: string;
+  // Phase 10: Durable queue
+  REDIS_URL: string;
+  // Phase 10: HTTP security
+  ALLOWED_ORIGINS: string[];
   // Worker / computation safety limits
   MAX_QUEUE_DEPTH: number;
   MAX_POINTS_PER_SESSION: number;
@@ -39,11 +44,19 @@ export const env: EnvConfig = {
   NODE_ENV: process.env["NODE_ENV"] ?? "development",
   SUPABASE_URL: getEnvVar("SUPABASE_URL"),
   SUPABASE_SERVICE_ROLE_KEY: getEnvVar("SUPABASE_SERVICE_ROLE_KEY"),
+  SUPABASE_ANON_KEY: getEnvVar("SUPABASE_ANON_KEY"),
   SUPABASE_JWT_SECRET: getEnvVar("SUPABASE_JWT_SECRET"),
 
-  // Maximum number of sessions that may sit in the in-memory worker queue at once.
-  // Sessions that arrive when the queue is full are dropped with a warning log.
-  // Operator can raise this via MAX_QUEUE_DEPTH env var without a code change.
+  // Phase 10: Redis connection URL for BullMQ durable queue
+  REDIS_URL: getEnvVar("REDIS_URL"),
+
+  // Phase 10: Comma-separated list of allowed CORS origins
+  ALLOWED_ORIGINS: (process.env["ALLOWED_ORIGINS"] ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
+
+  // Maximum number of sessions that may sit in the worker queue at once.
   MAX_QUEUE_DEPTH: getOptionalInt("MAX_QUEUE_DEPTH", 1_000),
 
   // Maximum GPS points allowed per session recalculation before the job is

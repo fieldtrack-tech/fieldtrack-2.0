@@ -1,4 +1,7 @@
-import { supabase } from "../../config/supabase.js";
+import {
+  supabaseAnonClient as supabase,
+  supabaseServiceClient,
+} from "../../config/supabase.js";
 import { enforceTenant } from "../../utils/tenant.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
@@ -216,7 +219,7 @@ export const attendanceRepository = {
     // Oldest unprocessed sessions are prioritised via ascending order.
     const RECOVERY_SCAN_LIMIT = 500;
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseServiceClient
       .from("attendance_sessions")
       .select(
         `

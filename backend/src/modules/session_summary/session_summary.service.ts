@@ -6,7 +6,7 @@ import { calculateHaversineDistance } from "../../utils/distance.js";
 import { BadRequestError, NotFoundError } from "../../utils/errors.js";
 import { metrics } from "../../utils/metrics.js";
 import { env } from "../../config/env.js";
-import { supabase } from "../../config/supabase.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import type { RecalculateResponse } from "./session_summary.schema.js";
 import { performance } from "perf_hooks";
 

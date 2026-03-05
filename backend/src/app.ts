@@ -1,18 +1,69 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "crypto";
 import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
 import fastifyRateLimit from "@fastify/rate-limit";
-import { startDistanceWorker } from "./workers/queue.js";
+import fastifyHelmet from "@fastify/helmet";
+import fastifyCompress from "@fastify/compress";
+import fastifyCors from "@fastify/cors";
+import { startDistanceWorker } from "./workers/distance.worker.js";
+import { AppError } from "./utils/errors.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: getLoggerConfig(env.NODE_ENV),
+    // Phase 10: HTTP hardening
+    bodyLimit: 1_000_000,           // 1 MB max request body
+    connectionTimeout: 5_000,        // 5 s TCP connection timeout
+    keepAliveTimeout: 72_000,        // 72 s keep-alive (ALB default is 60 s)
+    // Phase 10: Request correlation — generate UUID if no x-request-id header provided
+    requestIdHeader: "x-request-id",
+    genReqId: () => randomUUID(),
   });
 
-  // Register plugins
+  // ─── Phase 10: Security & Performance Plugins ───────────────────────────────
+
+  // Helmet sets secure HTTP headers (CSP, HSTS, X-Frame-Options, etc.)
+  await app.register(fastifyHelmet);
+
+  // Gzip/deflate/brotli response compression
+  await app.register(fastifyCompress);
+
+  // CORS — restrict to origins listed in ALLOWED_ORIGINS env var
+  await app.register(fastifyCors, {
+    origin: env.ALLOWED_ORIGINS.length > 0 ? env.ALLOWED_ORIGINS : false,
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  });
+
+  // Phase 10: Add x-request-id to every reply for end-to-end tracing
+  app.addHook("onSend", async (request, reply) => {
+    void reply.header("x-request-id", request.id);
+  });
+
+  // Phase 10: Global error handler — unhandled errors include requestId
+  app.setErrorHandler<Error>((error, request, reply) => {
+    if (error instanceof AppError) {
+      void reply.status(error.statusCode).send({
+        success: false,
+        error: error.message,
+        requestId: request.id,
+      });
+      return;
+    }
+
+    request.log.error({ error: error.message, requestId: request.id }, "Unhandled error");
+    void reply.status(500).send({
+      success: false,
+      error: "Internal server error",
+      requestId: request.id,
+    });
+  });
+
+  // ─── Existing Plugins ───────────────────────────────────────────────────────
+
   await app.register(fastifyRateLimit, {
     global: false, // Applied selectively per-route
   });
@@ -21,9 +72,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Register routes
   await registerRoutes(app);
 
-  // Bootstrap Phase 7 Background Worker.
-  // Explicitly NOT awaited — this is a perpetual infinite loop that must
-  // run alongside the HTTP server, not block app construction.
+  // Phase 10: Start BullMQ distance worker on boot.
+  // The worker runs its own Redis-backed event loop — no blocking here.
   startDistanceWorker(app);
 
   // NOTE: performStartupRecovery is intentionally NOT called here.

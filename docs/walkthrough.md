@@ -781,3 +781,320 @@ curl "http://localhost:3000/admin/org-summary?from=2026-03-01T00:00:00Z&to=2026-
 | `from > to` guard | `BadRequestError` thrown in service before any DB call |
 | `userId` validation | `checkUserHasSessionsInOrg()` before aggregation |
 | Routes registered | `analyticsRoutes` registered in `routes/index.ts` |
+
+---
+
+## Phase 10 — Production Hardening & Enterprise Correctness
+
+### Overview
+
+Phase 10 transforms FieldTrack 2.0 from a highly functional single-instance backend into a production-grade, horizontally scalable service. Four pillars are addressed: durable job processing, defence-in-depth database access control, end-to-end request tracing, and HTTP-layer security hardening.
+
+---
+
+### 10.1 — Redis + BullMQ Durable Queue
+
+#### Why In-Memory Queue Was Replaced
+
+The Phase 7 in-memory queue had three structural limits:
+
+| Problem | Impact |
+|---------|--------|
+| Volatile memory | All pending jobs lost on process restart, deploy, or OOM kill |
+| Single-process bound | Cannot scale horizontally — multiple pods would run isolated queues |
+| Manual retry logic | Failed jobs were silently dropped; no backoff, no retained failure record |
+
+#### BullMQ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  HTTP Request Lifecycle                                          │
+│                                                                  │
+│  POST /attendance/check-out                                      │
+│       │                                                          │
+│       ▼                                                          │
+│  attendanceService.checkOut()                                    │
+│       │                                                          │
+│       │  enqueueDistanceJob(sessionId)  ─── fire & forget        │
+│       │         │                                                │
+│       │         ▼ (async, non-blocking)                          │
+│       │   BullMQ Queue ──────────────────► Redis (persisted)     │
+│       │                                       [jobId=sessionId]  │
+│       │                                                          │
+│       ▼                                                          │
+│  200 OK (instant)                                                │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Background Worker Lifecycle                                     │
+│                                                                  │
+│  BullMQ Worker polls Redis queue                                 │
+│       │                                                          │
+│       ▼                                                          │
+│  Job: { sessionId }                                              │
+│       │                                                          │
+│       ▼                                                          │
+│  sessionSummaryService.calculateAndSaveSystem(app, sessionId)    │
+│       │                                                          │
+│       ├── success → metrics.recordRecalculationTime()            │
+│       │            log: { jobId, sessionId, executionTimeMs }    │
+│       │                                                          │
+│       └── failure → BullMQ retries with exponential backoff      │
+│                     (attempts: 5 → delays: 1s, 2s, 4s, 8s, 16s) │
+│                     Failed jobs retained in Redis (removeOnFail:false)
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Idempotency Guarantee
+
+`enqueueDistanceJob()` passes `{ jobId: sessionId }` to BullMQ. BullMQ silently ignores a duplicate `add()` call if a job with the same `jobId` already exists in the queue. This replaces the Phase 7 `queuedSet: Set<string>` deduplication without any in-memory state.
+
+#### Files Changed / Created
+
+| File | Action | Notes |
+|------|--------|-------|
+| `src/config/redis.ts` | **NEW** | Parses `REDIS_URL` into BullMQ connection options; handles `rediss://` TLS |
+| `src/workers/distance.queue.ts` | **NEW** | BullMQ `Queue` definition + `enqueueDistanceJob()` + `getQueueDepth()` |
+| `src/workers/distance.worker.ts` | **NEW** | BullMQ `Worker` processor + `startDistanceWorker()` + `performStartupRecovery()` |
+| `src/workers/queue.ts` | **DELETED** | Phase 7 in-memory queue removed |
+| `src/modules/attendance/attendance.service.ts` | **MODIFIED** | `enqueueDistanceRecalculation` → `enqueueDistanceJob` (fire-and-forget) |
+| `src/modules/session_summary/session_summary.controller.ts` | **MODIFIED** | Removed `processingTracker` import (BullMQ handles dedup via jobId) |
+| `src/routes/internal.ts` | **MODIFIED** | `getQueueDepth` now imported from `distance.queue.ts`; awaited (async) |
+| `src/app.ts` | **MODIFIED** | `startDistanceWorker` imported from `distance.worker.ts` |
+
+#### Job Configuration
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `attempts` | 5 | Tolerate transient DB/network failures |
+| `backoff.type` | `exponential` | Avoid thundering herd on recovery |
+| `backoff.delay` | 1000 ms | 1s → 2s → 4s → 8s → 16s |
+| `removeOnComplete` | true | Completed jobs need no retention |
+| `removeOnFail` | false | Keep failed jobs for operator inspection |
+| `concurrency` | 1 | CPU-bound Haversine loop; one job at a time |
+
+#### Crash Recovery (Phase 7.5 Preserved)
+
+`performStartupRecovery()` is now in `distance.worker.ts`. It scans for orphaned sessions and re-enqueues them via `enqueueDistanceJob()` (backed by Redis) instead of the old in-memory push. Jobs survive a second crash during recovery because they are already in Redis before the process exits.
+
+---
+
+### 10.2 — Supabase Client Separation (RLS Defence-in-Depth)
+
+#### Prior State
+
+The entire backend used a single `supabaseServiceClient` (service role key) for every database operation. This bypassed PostgreSQL Row Level Security (RLS) globally — a correct approach for backend systems where RLS is redundant when code enforces tenant isolation — but offered no second layer of protection.
+
+#### Phase 10 Strategy
+
+Two named clients are now exported from `src/config/supabase.ts`:
+
+| Client | Key Used | RLS | Usage |
+|--------|----------|-----|-------|
+| `supabaseAnonClient` | `SUPABASE_ANON_KEY` | **Enforced** | All normal HTTP request handlers |
+| `supabaseServiceClient` | `SUPABASE_SERVICE_ROLE_KEY` | **Bypassed** | System paths only (listed below) |
+
+**Service client usage is restricted to:**
+- `attendance.repository.ts` → `findSessionsNeedingRecalculation()` — crash recovery bootstrap scan across all tenants
+- `session_summary.repository.ts` — worker writes (no user JWT available at write time)
+- `session_summary.service.ts` — direct session lookup in `calculateAndSaveSystem()` (worker path)
+
+**Anon client is used in:**
+- `attendance.repository.ts` (all request-path methods)
+- `locations.repository.ts`
+- `expenses.repository.ts`
+- `analytics.repository.ts`
+
+#### Why Not Remove enforceTenant() With RLS?
+
+`enforceTenant()` is retained alongside the anon client for defence-in-depth:
+
+1. **RLS policy misconfiguration** — if a RLS policy is accidentally dropped or misconfigured in Supabase, `enforceTenant()` still filters at the application layer
+2. **Complex queries** — some joins or subqueries may not be covered by RLS policies in all Supabase versions
+3. **Worker paths** — worker paths explicitly use the service client (no JWT) and rely entirely on `enforceTenant()` for isolation
+
+The combination (`supabaseAnonClient` + `enforceTenant()`) provides two independent layers; either layer failing alone does not expose cross-tenant data.
+
+---
+
+### 10.3 — Request Correlation & Observability Upgrade
+
+#### Request ID Generation
+
+Fastify's built-in request ID support is enabled in `app.ts`:
+
+```typescript
+const app = Fastify({
+  requestIdHeader: "x-request-id",  // Accept client-provided ID
+  genReqId: () => randomUUID(),     // Generate UUID if not provided
+});
+```
+
+Every request gets a UUID attached to `request.id`. The ID is:
+- Injected into **Pino's log context** automatically (Fastify wraps the logger with request-scoped `bindings` including `reqId`)
+- Returned in every **response header** as `x-request-id` (via `onSend` hook)
+- Included in **all error response bodies** as `requestId`
+
+#### Error Response Shape (Phase 10)
+
+All error responses across every controller now follow a consistent shape:
+
+```json
+{
+  "success": false,
+  "error": "Human-readable error message",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+This applies to:
+- Zod validation failures (400)
+- AppError subclasses (400, 401, 403, 404)
+- Unexpected 500 errors
+
+Clients and monitoring tools can correlate error reports to specific log lines using the `requestId` without manually parsing log files.
+
+#### Worker Log Correlation
+
+The BullMQ worker logs include `jobId` and `sessionId` on every state transition:
+
+```json
+{ "level": "info", "jobId": "uuid", "sessionId": "uuid", "executionTimeMs": 142, "msg": "Distance worker: job completed successfully" }
+{ "level": "error", "jobId": "uuid", "sessionId": "uuid", "executionTimeMs": 23, "error": "...", "msg": "Distance worker: job failed" }
+```
+
+---
+
+### 10.4 — HTTP Security Hardening
+
+#### Plugins Registered
+
+| Plugin | Purpose |
+|--------|---------|
+| `@fastify/helmet` | Sets security headers: `Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, `Content-Security-Policy` |
+| `@fastify/compress` | Gzip/deflate/brotli response compression; reduces bandwidth on JSON-heavy analytics responses |
+| `@fastify/cors` | Restricts `Origin` header to the `ALLOWED_ORIGINS` list; blocks cross-origin requests from unlisted domains |
+
+#### Fastify Server Options
+
+```typescript
+const app = Fastify({
+  bodyLimit: 1_000_000,     // 1 MB — prevents large body DoS attacks
+  connectionTimeout: 5_000, // 5 s — drops slow TCP connects
+  keepAliveTimeout: 72_000, // 72 s — tuned for AWS ALB / Nginx upstream
+});
+```
+
+#### CORS Configuration
+
+`ALLOWED_ORIGINS` is a comma-separated list of permitted origins:
+
+```
+ALLOWED_ORIGINS=https://app.fieldtrack.io,https://admin.fieldtrack.io
+```
+
+If `ALLOWED_ORIGINS` is empty, CORS is disabled (all cross-origin requests blocked), which is appropriate for API-only deployments accessed from a backend or mobile app without a browser.
+
+---
+
+### 10.5 — Environment Variables Required
+
+The following environment variables must be present for Phase 10 to boot:
+
+| Variable | Phase Added | Required | Description |
+|----------|-------------|----------|-------------|
+| `SUPABASE_URL` | Phase 0 | ✅ | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Phase 0 | ✅ | Supabase service role key |
+| `SUPABASE_ANON_KEY` | **Phase 10** | ✅ | Supabase anon/public key |
+| `SUPABASE_JWT_SECRET` | Phase 1 | ✅ | Supabase JWT signing secret |
+| `REDIS_URL` | **Phase 10** | ✅ | Redis connection URL (`redis://` or `rediss://`) |
+| `ALLOWED_ORIGINS` | **Phase 10** | Optional | Comma-separated CORS origins |
+| `PORT` | Phase 0 | Optional | HTTP server port (default: 3000) |
+| `NODE_ENV` | Phase 0 | Optional | `development` or `production` |
+| `MAX_QUEUE_DEPTH` | Phase 7 | Optional | Max sessions per queue depth (default: 1000) |
+| `MAX_POINTS_PER_SESSION` | Phase 7 | Optional | Max GPS points per recalculation (default: 50000) |
+| `MAX_SESSION_DURATION_HOURS` | Phase 7 | Optional | Max session age for recalculation (default: 168) |
+
+---
+
+### Horizontal Scaling
+
+Phase 10 removes all blockers for multi-instance deployment:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Load Balancer (AWS ALB / Nginx)                              │
+│       │               │                                       │
+│       ▼               ▼                                       │
+│  Backend Pod 1    Backend Pod 2   ...                         │
+│  (Fastify)        (Fastify)                                   │
+│       │               │                                       │
+│       └───────┬───────┘                                       │
+│               ▼                                               │
+│           Supabase (PostgreSQL + RLS)                         │
+│               │                                               │
+│       ┌───────┴───────┐                                       │
+│       ▼               ▼                                       │
+│   Redis Queue     Redis Queue  ← same instance, shared state  │
+│     BullMQ           BullMQ                                   │
+│   Worker Pod 1   Worker Pod 2  ← jobs distributed across pods │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**What enables horizontal scaling:**
+
+| Concern | Phase 7 (In-Memory) | Phase 10 (Redis) |
+|---------|---------------------|-----------------|
+| Job durability | ❌ Lost on crash | ✅ Persisted in Redis |
+| Multi-pod deduplication | ❌ Each pod had its own Set | ✅ BullMQ jobId dedup in Redis |
+| Worker distribution | ❌ All pods duplicate work | ✅ Jobs distributed across workers |
+| Crash recovery | ❌ Manual re-enqueue needed | ✅ Auto-retry via BullMQ backoff |
+
+---
+
+### Files Changed / Created Summary
+
+| File | Action |
+|------|--------|
+| `src/config/env.ts` | **MODIFIED** — Added `REDIS_URL`, `SUPABASE_ANON_KEY`, `ALLOWED_ORIGINS` |
+| `src/config/supabase.ts` | **MODIFIED** — Split into `supabaseAnonClient` + `supabaseServiceClient` |
+| `src/config/redis.ts` | **NEW** — Redis connection options parser |
+| `src/workers/distance.queue.ts` | **NEW** — BullMQ Queue + `enqueueDistanceJob` |
+| `src/workers/distance.worker.ts` | **NEW** — BullMQ Worker + crash recovery |
+| `src/workers/queue.ts` | **DELETED** — In-memory queue removed |
+| `src/app.ts` | **MODIFIED** — Helmet, compress, CORS, request ID, body limits, global error handler |
+| `src/server.ts` | **MODIFIED** — `performStartupRecovery` imported from `distance.worker.ts` |
+| `src/modules/attendance/attendance.service.ts` | **MODIFIED** — Uses `enqueueDistanceJob` |
+| `src/modules/attendance/attendance.repository.ts` | **MODIFIED** — `supabaseAnonClient`; `supabaseServiceClient` for recovery scan |
+| `src/modules/attendance/attendance.controller.ts` | **MODIFIED** — `requestId` in all error responses |
+| `src/modules/locations/locations.repository.ts` | **MODIFIED** — `supabaseAnonClient` |
+| `src/modules/locations/locations.controller.ts` | **MODIFIED** — `requestId` in all error responses |
+| `src/modules/expenses/expenses.repository.ts` | **MODIFIED** — `supabaseAnonClient` |
+| `src/modules/expenses/expenses.controller.ts` | **MODIFIED** — `requestId` in all error responses |
+| `src/modules/analytics/analytics.repository.ts` | **MODIFIED** — `supabaseAnonClient` |
+| `src/modules/analytics/analytics.controller.ts` | **MODIFIED** — `requestId` in all error responses |
+| `src/modules/session_summary/session_summary.repository.ts` | **MODIFIED** — `supabaseServiceClient` (worker path) |
+| `src/modules/session_summary/session_summary.service.ts` | **MODIFIED** — `supabaseServiceClient` (worker path) |
+| `src/modules/session_summary/session_summary.controller.ts` | **MODIFIED** — Removed `processingTracker`; `requestId` in error responses |
+| `src/routes/internal.ts` | **MODIFIED** — `getQueueDepth` from `distance.queue.ts` (now async) |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | ✅ Zero errors |
+| `@fastify/helmet` registered | Security headers set on every response |
+| `@fastify/compress` registered | Gzip/brotli enabled |
+| `@fastify/cors` registered | Origin-restricted via `ALLOWED_ORIGINS` |
+| `bodyLimit: 1_000_000` | 1 MB request cap enforced |
+| `genReqId` → UUID | Every request gets a unique trace ID |
+| `x-request-id` header | Attached to every response via `onSend` hook |
+| Error bodies include `requestId` | All controllers + global error handler updated |
+| `supabaseAnonClient` in request handlers | ✅ RLS enforced by default |
+| `supabaseServiceClient` restricted | ✅ Only recovery scan + worker writes |
+| `queue.ts` deleted | ✅ In-memory queue fully removed |
+| `enqueueDistanceJob` (BullMQ) | Jobs stored in Redis, survive restarts |
+| BullMQ worker starts on boot | `startDistanceWorker(app)` called in `buildApp()` |
+| Crash recovery re-enqueues to Redis | `performStartupRecovery` in `distance.worker.ts` |

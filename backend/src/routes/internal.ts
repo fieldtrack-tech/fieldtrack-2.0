@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { metrics } from "../utils/metrics.js";
-import { getQueueDepth } from "../workers/queue.js";
+import { getQueueDepth } from "../workers/distance.queue.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireRole } from "../middleware/role-guard.js";
 
@@ -35,7 +35,8 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
       preHandler: [authenticate, requireRole("ADMIN")],
     },
     async (_request, reply): Promise<void> => {
-      const snapshot = metrics.snapshot(getQueueDepth());
+      const queueDepth = await getQueueDepth();
+      const snapshot = metrics.snapshot(queueDepth);
       reply.status(200).send(snapshot);
     },
   );

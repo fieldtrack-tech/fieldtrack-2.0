@@ -14,15 +14,15 @@ export const locationsController = {
             reply.status(201).send({ success: true, data: record });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             if (error instanceof Error && error.name === "ZodError") {
-                reply.status(400).send({ error: JSON.parse(error.message) });
+                reply.status(400).send({ success: false, error: JSON.parse(error.message), requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error ingesting location");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 
@@ -33,15 +33,15 @@ export const locationsController = {
             reply.status(201).send({ success: true, inserted });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             if (error instanceof Error && error.name === "ZodError") {
-                reply.status(400).send({ error: JSON.parse(error.message) });
+                reply.status(400).send({ success: false, error: JSON.parse(error.message), requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error ingesting location batch");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 
@@ -52,15 +52,15 @@ export const locationsController = {
             reply.status(200).send({ success: true, data: route });
         } catch (error) {
             if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ error: error.message });
+                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
                 return;
             }
             if (error instanceof Error && error.name === "ZodError") {
-                reply.status(400).send({ error: JSON.parse(error.message) });
+                reply.status(400).send({ success: false, error: JSON.parse(error.message), requestId: request.id });
                 return;
             }
             request.log.error(error, "Unexpected error fetching location route");
-            reply.status(500).send({ error: "Internal server error" });
+            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
         }
     },
 };

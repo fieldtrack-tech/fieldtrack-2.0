@@ -23,7 +23,7 @@ export const expensesController = {
         const issues = parsed.error.issues
           .map((i) => i.message)
           .join("; ");
-        reply.status(400).send({ error: `Validation failed: ${issues}` });
+        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
         return;
       }
 
@@ -31,11 +31,11 @@ export const expensesController = {
       reply.status(201).send({ success: true, data: expense });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error creating expense");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 
@@ -54,11 +54,11 @@ export const expensesController = {
       reply.status(200).send({ success: true, data: expenses });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error fetching user expenses");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 
@@ -80,11 +80,11 @@ export const expensesController = {
       reply.status(200).send({ success: true, data: expenses });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error fetching org expenses");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 
@@ -104,7 +104,7 @@ export const expensesController = {
         const issues = parsed.error.issues
           .map((i) => i.message)
           .join("; ");
-        reply.status(400).send({ error: `Validation failed: ${issues}` });
+        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
         return;
       }
 
@@ -116,11 +116,11 @@ export const expensesController = {
       reply.status(200).send({ success: true, data: expense });
     } catch (error) {
       if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ error: error.message });
+        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
         return;
       }
       request.log.error(error, "Unexpected error updating expense status");
-      reply.status(500).send({ error: "Internal server error" });
+      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
     }
   },
 };
