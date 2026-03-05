@@ -7,14 +7,15 @@ declare module "fastify" {
   }
 }
 
-// Isolated registry — avoids polluting the global prom-client default registry
-// in case other libraries also use prom-client internally.
+// Create isolated Prometheus registry
 const register = new client.Registry();
 
-// Default Node.js metrics: CPU usage, heap, event-loop lag, GC, libuv handles.
+// Collect default Node.js metrics
 client.collectDefaultMetrics({ register });
 
-// ─── HTTP Request Metrics ────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------- */
+/*                                  Metrics                                   */
+/* -------------------------------------------------------------------------- */
 
 const httpRequestsTotal = new client.Counter({
   name: "http_requests_total",
@@ -27,7 +28,6 @@ const httpRequestDuration = new client.Histogram({
   name: "http_request_duration_seconds",
   help: "HTTP request latency in seconds",
   labelNames: ["method", "route", "status_code"],
-  // Buckets tuned for a JSON API: 10ms → 5s
   buckets: [0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5],
   registers: [register],
 });
@@ -38,15 +38,21 @@ const httpRequestsInFlight = new client.Gauge({
   registers: [register],
 });
 
+/* -------------------------------------------------------------------------- */
+/*                              Fastify Plugin                                */
+/* -------------------------------------------------------------------------- */
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
-  // Start a high-resolution timer on every incoming request.
+
+  /* --------------------------- Request Start Hook -------------------------- */
+
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();
     httpRequestsInFlight.inc();
   });
 
-  // On response: compute elapsed time, record histogram + counter.
-  // Skips the /metrics route itself to avoid self-referential noise.
+  /* -------------------------- Response Complete Hook ----------------------- */
+
   fastify.addHook("onResponse", async (request, reply) => {
     if (!request.startTime) return;
 
@@ -59,19 +65,23 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
       request.raw.url ??
       "unknown";
 
-    if (route === "/metrics") return;
+    // Skip self-scraping
+    if (route === "/metrics") {
+      httpRequestsInFlight.dec();
+      return;
+    }
 
     httpRequestsTotal.inc({
       method: request.method,
       route,
-      status_code: String(reply.statusCode)
+      status_code: String(reply.statusCode),
     });
 
     httpRequestDuration.observe(
       {
         method: request.method,
         route,
-        status_code: String(reply.statusCode)
+        status_code: String(reply.statusCode),
       },
       duration
     );
@@ -79,12 +89,16 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     httpRequestsInFlight.dec();
   });
 
-  // Decrement in-flight counter on error to prevent gauge leaks.
-  fastify.addHook("onError", async () => {
-    httpRequestsInFlight.dec();
+  /* ----------------------------- Error Hook -------------------------------- */
+
+  fastify.addHook("onError", async (request) => {
+    if (request.startTime) {
+      httpRequestsInFlight.dec();
+    }
   });
 
-  // Prometheus scrape endpoint — unauthenticated, internal scraping only.
+  /* ----------------------------- Metrics Route ----------------------------- */
+
   fastify.get("/metrics", async (_request, reply) => {
     reply.header("Content-Type", register.contentType);
     return register.metrics();
