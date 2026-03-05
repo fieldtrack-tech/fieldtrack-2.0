@@ -1,6 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import client from "prom-client";
 
+declare module "fastify" {
+  interface FastifyRequest {
+    startTime?: [number, number];
+  }
+}
+
 // Isolated registry — avoids polluting the global prom-client default registry
 // in case other libraries also use prom-client internally.
 const register = new client.Registry();
@@ -29,39 +35,46 @@ const httpRequestDuration = new client.Histogram({
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   // Start a high-resolution timer on every incoming request.
   fastify.addHook("onRequest", (request, _reply, done) => {
-    (request as any).startTime = process.hrtime();
+    request.startTime = process.hrtime();
     done();
   });
 
   // On response: compute elapsed time, record histogram + counter.
   // Skips the /metrics route itself to avoid self-referential noise.
   fastify.addHook("onResponse", (request, reply, done) => {
-    const startTime = (request as any).startTime;
-    if (!startTime) {
+    if (!request.startTime) {
       done();
       return;
     }
 
-    const route = (request as any).routerPath || request.raw.url || "unknown";
-    
+    const diff = process.hrtime(request.startTime);
+    const duration = diff[0] + diff[1] / 1e9;
+
+    const route =
+      request.routeOptions?.url ||
+      request.routerPath ||
+      request.raw.url ||
+      "unknown";
+
     if (route === "/metrics") {
       done();
       return;
     }
-
-    const diff = process.hrtime(startTime);
-    const duration = diff[0] + diff[1] / 1e9;
-
-    httpRequestDuration.observe(
-      { method: request.method, route, status_code: reply.statusCode },
-      duration
-    );
 
     httpRequestsTotal.inc({
       method: request.method,
       route,
       status_code: reply.statusCode
     });
+
+    httpRequestDuration.observe(
+      {
+        method: request.method,
+        route,
+        status_code: reply.statusCode
+      },
+      duration
+    );
 
     done();
   });
