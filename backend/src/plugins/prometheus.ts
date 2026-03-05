@@ -1,5 +1,4 @@
 import type { FastifyPluginAsync } from "fastify";
-import type { IncomingMessage } from "http";
 import client from "prom-client";
 
 // Isolated registry — avoids polluting the global prom-client default registry
@@ -27,41 +26,42 @@ const httpRequestDuration = new client.Histogram({
   registers: [register],
 });
 
-// WeakMap keyed on the raw Node IncomingMessage — avoids patching request.raw
-// and survives the full Fastify request lifecycle without memory leaks.
-const timings = new WeakMap<IncomingMessage, [number, number]>();
-
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   // Start a high-resolution timer on every incoming request.
   fastify.addHook("onRequest", (request, _reply, done) => {
-    timings.set(request.raw, process.hrtime());
+    (request as any).startTime = process.hrtime();
     done();
   });
 
   // On response: compute elapsed time, record histogram + counter.
   // Skips the /metrics route itself to avoid self-referential noise.
   fastify.addHook("onResponse", (request, reply, done) => {
-    const start = timings.get(request.raw);
-
-    if (start !== undefined) {
-      const route = request.routeOptions?.url ?? request.raw.url ?? "unknown";
-      
-      if (route === "/metrics") {
-        timings.delete(request.raw);
-        done();
-        return;
-      }
-
-      const diff = process.hrtime(start);
-      const seconds = diff[0] + diff[1] / 1e9;
-      const method = request.method;
-      const status = String(reply.statusCode);
-
-      // Positional args match labelNames order: ["method", "route", "status_code"]
-      httpRequestDuration.labels(method, route, status).observe(seconds);
-      httpRequestsTotal.labels(method, route, status).inc();
-      timings.delete(request.raw);
+    const startTime = (request as any).startTime;
+    if (!startTime) {
+      done();
+      return;
     }
+
+    const route = (request as any).routerPath || request.raw.url || "unknown";
+    
+    if (route === "/metrics") {
+      done();
+      return;
+    }
+
+    const diff = process.hrtime(startTime);
+    const duration = diff[0] + diff[1] / 1e9;
+
+    httpRequestDuration.observe(
+      { method: request.method, route, status_code: reply.statusCode },
+      duration
+    );
+
+    httpRequestsTotal.inc({
+      method: request.method,
+      route,
+      status_code: reply.statusCode
+    });
 
     done();
   });
