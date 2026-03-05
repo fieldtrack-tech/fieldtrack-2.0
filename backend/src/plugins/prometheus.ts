@@ -71,20 +71,13 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
       return;
     }
 
-    httpRequestsTotal.inc({
-      method: request.method,
-      route,
-      status_code: String(reply.statusCode),
-    });
+    httpRequestsTotal
+      .labels(request.method, route, String(reply.statusCode))
+      .inc();
 
-    httpRequestDuration.observe(
-      {
-        method: request.method,
-        route,
-        status_code: String(reply.statusCode),
-      },
-      duration
-    );
+    httpRequestDuration
+      .labels(request.method, route, String(reply.statusCode))
+      .observe(duration);
 
     httpRequestsInFlight.dec();
   });
