@@ -92,4 +92,4 @@ volumes:
 networks:
   fieldtrack_network:
     name: fieldtrack_network
-    driver: bridge
+    external: true
