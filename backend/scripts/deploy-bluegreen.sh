@@ -54,10 +54,11 @@ fi
 
 docker run -d \
   --name "$INACTIVE_NAME" \
+  --network monitoring \
   -p "$INACTIVE_PORT:$APP_PORT" \
   --restart unless-stopped \
   --env-file "$ENV_FILE" \
-  "$IMAGE"
+  "$IMAGE""
 
 echo "[4/7] Waiting for health check..."
 
