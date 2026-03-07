@@ -8,6 +8,16 @@ distributor:
         http:
         grpc:
 
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  processor:
+    service_graphs:
+      dimensions:
+        - http.method
+        - http.route
+
 storage:
   trace:
     backend: local
