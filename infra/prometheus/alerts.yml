@@ -1,0 +1,48 @@
+groups:
+  - name: fieldtrack-backend-alerts
+    rules:
+
+      - alert: BackendDown
+        expr: sum(up{job=~"fieldtrack-backend.*"}) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend unavailable"
+          description: "All FieldTrack backend instances are down."
+
+      - alert: HighAPIErrorRate
+        expr: rate(http_requests_total{status_code=~"5.."}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API error rate"
+          description: "More than 5% of requests are failing."
+
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "p95 latency above 1 second."
+
+      - alert: HighMemoryUsage
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "System memory usage above 90%."
+
+      - alert: DiskAlmostFull
+        expr: (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk almost full"
+          description: "Root filesystem usage above 90%."
