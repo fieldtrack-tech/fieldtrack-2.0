@@ -9,7 +9,14 @@ declare module "fastify" {
   }
 }
 
-const register = new client.Registry();
+const register = new client.Registry<client.OpenMetricsContentType>();
+
+// OpenMetrics format is required for exemplar support.
+// prom-client throws "Exemplars are supported only on OpenMetrics registries"
+// if this is omitted. It also enables the # {trace_id="..."} exemplar syntax
+// that Prometheus needs to persist and expose exemplar data.
+register.setContentType(client.Registry.OPENMETRICS_CONTENT_TYPE);
+
 client.collectDefaultMetrics({ register });
 
 const httpRequestsTotal = new client.Counter({
