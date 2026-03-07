@@ -9,14 +9,15 @@ distributor:
         grpc:
 
 metrics_generator:
+  processor:
+    service_graphs: {}
+  storage:
+    path: /tmp/tempo/generator/wal
   registry:
     external_labels:
       source: tempo
-  processor:
-    service_graphs:
-      dimensions:
-        - http.method
-        - http.route
+  remote_write:
+    - url: http://prometheus:9090/api/v1/write
 
 storage:
   trace:
