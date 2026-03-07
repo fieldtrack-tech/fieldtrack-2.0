@@ -8,25 +8,24 @@ distributor:
         http:
         grpc:
 
-metrics_generator:
-  storage:
-    path: /tmp/tempo/generator/wal
+ingester:
+  trace_idle_period: 10s
+  max_block_bytes: 1_000_000
+  max_block_duration: 5m
 
-  processor:
-    service_graphs: {}
-    span_metrics: {}
-
-  registry:
-    external_labels:
-      source: tempo
-
-  traces_storage:
-    path: /tmp/tempo/generator/traces
-
-  metrics_ingestion_time_range_slack: 30s
+compactor:
+  compaction:
+    block_retention: 24h
 
 storage:
   trace:
     backend: local
     local:
-      path: /tmp/tempo/traces
+      path: /var/tempo/traces
+
+metrics_generator:
+  storage:
+    path: /var/tempo/generator
+  processor:
+    service_graphs:
+    span_metrics:

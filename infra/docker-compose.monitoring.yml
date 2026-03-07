@@ -13,6 +13,7 @@ services:
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./tempo/tempo.yml:/etc/tempo.yaml
+      - ./tempo/data:/var/tempo
     expose:
       - "3200"
       - "4318"
