@@ -4,11 +4,15 @@ Production-ready Fastify + TypeScript backend for FieldTrack 2.0 SaaS platform.
 
 ## Tech Stack
 
-- **Runtime**: Node.js 18+
-- **Language**: TypeScript (strict mode)
-- **Framework**: Fastify
+- **Runtime**: Node.js 20+
+- **Language**: TypeScript 5.9 (strict mode, ESM)
+- **Framework**: Fastify 5
 - **Auth**: @fastify/jwt (Supabase JWT)
-- **Database**: PostgreSQL via Supabase (not connected yet)
+- **Database**: PostgreSQL via Supabase
+- **Job Queue**: BullMQ + Redis
+- **Validation**: Zod 4
+- **Observability**: OpenTelemetry, Prometheus, Grafana
+- **Security**: @fastify/helmet, @fastify/cors, @fastify/rate-limit, @fastify/compress
 
 ## Quick Start
 
@@ -37,16 +41,18 @@ npm run dev
 src/
 ├── server.ts          # Entry point
 ├── app.ts             # Fastify app factory
+├── tracing.ts         # OpenTelemetry tracing setup
 ├── config/            # Environment & logger config
-├── plugins/           # Fastify plugins (JWT)
+├── plugins/           # Fastify plugins (JWT, metrics, etc.)
 ├── routes/            # Route modules
-├── middleware/         # Auth & request middleware
-├── domain/            # Business domain modules
+├── middleware/        # Auth & request middleware
+├── modules/           # Business domain modules
 │   ├── organization/
 │   ├── user/
 │   ├── attendance/
 │   ├── location/
 │   └── expense/
+├── workers/           # BullMQ background job workers
 ├── types/             # TypeScript type definitions
 └── utils/             # Shared utilities
 ```
@@ -76,3 +82,8 @@ docker run -p 3000:3000 --env-file .env fieldtrack-backend
 | `SUPABASE_URL`             | Supabase project URL        | Yes      |
 | `SUPABASE_SERVICE_ROLE_KEY`| Supabase service role key   | Yes      |
 | `SUPABASE_JWT_SECRET`      | JWT signing secret          | Yes      |
+| `REDIS_HOST`               | Redis host for BullMQ       | Yes      |
+| `REDIS_PORT`               | Redis port (default: 6379)  | No       |
+| `TEMPO_ENDPOINT`           | Tempo OTLP endpoint         | No       |
+
+See `.env.example` for a complete list of environment variables.
