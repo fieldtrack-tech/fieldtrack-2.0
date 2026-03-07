@@ -49,7 +49,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addHook("onRequest", async (request) => {
     const span = trace.getSpan(context.active());
     if (span) {
-      span.setAttribute("http.route", request.routeOptions.url);
+      if (request.routeOptions.url) {
+        span.setAttribute("http.route", request.routeOptions.url);
+      }
       span.setAttribute("http.method", request.method);
       span.setAttribute("http.client_ip", request.ip);
       span.setAttribute("request.id", String(request.id));
