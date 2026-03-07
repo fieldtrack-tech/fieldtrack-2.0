@@ -26,19 +26,14 @@ storage:
 metrics_generator:
   storage:
     path: /var/tempo/generator
-
-  remote_write:
-    - url: http://prometheus:9090/api/v1/write
-      send_exemplars: true
-
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
   processor:
     service_graphs:
-      enabled: true
       wait: 10s
       max_items: 10000
-
     span_metrics:
-      enabled: true
 
 overrides:
   defaults:
