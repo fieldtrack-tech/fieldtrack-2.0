@@ -10,20 +10,25 @@ import type { AttendanceSession } from "./attendance.schema.js";
  * Attendance repository — all Supabase queries for attendance_sessions.
  * Every query is scoped via enforceTenant() for tenant isolation.
  * enforceTenant() is always called BEFORE terminal operations (.single/.range).
+ *
+ * Phase 15.5 — column names aligned with Phase 16 migration schema:
+ *   user_id       → employee_id
+ *   check_in_at   → checkin_at
+ *   check_out_at  → checkout_at
  */
 export const attendanceRepository = {
   /**
-   * Find an open session (no check_out_at) for a specific user.
+   * Find an open session (no checkout_at) for a specific employee.
    */
   async findOpenSession(
     request: FastifyRequest,
-    userId: string,
+    employeeId: string,
   ): Promise<AttendanceSession | null> {
     const baseQuery = supabase
       .from("attendance_sessions")
-      .select("*")
-      .eq("user_id", userId)
-      .is("check_out_at", null);
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+      .eq("employee_id", employeeId)
+      .is("checkout_at", null);
 
     const { data, error } = await enforceTenant(request, baseQuery)
       .limit(1)
@@ -40,19 +45,19 @@ export const attendanceRepository = {
   },
 
   /**
-   * Exact lookup to validate that a specific session belongs to the user and is still active.
+   * Exact lookup to validate that a specific session belongs to the employee and is still active.
    */
   async validateSessionActive(
     request: FastifyRequest,
     sessionId: string,
-    userId: string,
+    employeeId: string,
   ): Promise<boolean> {
     const baseQuery = supabase
       .from("attendance_sessions")
       .select("id")
       .eq("id", sessionId)
-      .eq("user_id", userId)
-      .is("check_out_at", null);
+      .eq("employee_id", employeeId)
+      .is("checkout_at", null);
 
     const { data, error } = await enforceTenant(request, baseQuery)
       .limit(1)
@@ -73,20 +78,18 @@ export const attendanceRepository = {
    */
   async createSession(
     request: FastifyRequest,
-    userId: string,
+    employeeId: string,
   ): Promise<AttendanceSession> {
     const now = new Date().toISOString();
 
     const { data, error } = await supabase
       .from("attendance_sessions")
       .insert({
-        user_id: userId,
+        employee_id: employeeId,
         organization_id: request.organizationId,
-        check_in_at: now,
-        created_at: now,
-        updated_at: now,
+        checkin_at: now,
       })
-      .select("*")
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .single();
 
     if (error) {
@@ -96,7 +99,7 @@ export const attendanceRepository = {
   },
 
   /**
-   * Close an open session by setting check_out_at.
+   * Close an open session by setting checkout_at.
    */
   async closeSession(
     request: FastifyRequest,
@@ -106,11 +109,11 @@ export const attendanceRepository = {
 
     const baseQuery = supabase
       .from("attendance_sessions")
-      .update({ check_out_at: now, updated_at: now })
+      .update({ checkout_at: now })
       .eq("id", sessionId);
 
     const { data, error } = await enforceTenant(request, baseQuery)
-      .select("*")
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .single();
 
     if (error) {
@@ -120,11 +123,11 @@ export const attendanceRepository = {
   },
 
   /**
-   * Get all sessions for a specific user (employee's own sessions).
+   * Get all sessions for a specific employee (employee's own sessions).
    */
   async findSessionsByUser(
     request: FastifyRequest,
-    userId: string,
+    employeeId: string,
     page: number,
     limit: number,
   ): Promise<AttendanceSession[]> {
@@ -132,9 +135,9 @@ export const attendanceRepository = {
 
     const baseQuery = supabase
       .from("attendance_sessions")
-      .select("*")
-      .eq("user_id", userId)
-      .order("check_in_at", { ascending: false });
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+      .eq("employee_id", employeeId)
+      .order("checkin_at", { ascending: false });
 
     const { data, error } = await enforceTenant(request, baseQuery).range(
       offset,
@@ -159,8 +162,8 @@ export const attendanceRepository = {
 
     const baseQuery = supabase
       .from("attendance_sessions")
-      .select("*")
-      .order("check_in_at", { ascending: false });
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+      .order("checkin_at", { ascending: false });
 
     const { data, error } = await enforceTenant(request, baseQuery).range(
       offset,
@@ -183,7 +186,7 @@ export const attendanceRepository = {
   ): Promise<AttendanceSession | null> {
     const baseQuery = supabase
       .from("attendance_sessions")
-      .select("*")
+      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .eq("id", sessionId);
 
     const { data, error } = await enforceTenant(request, baseQuery).single();
@@ -200,23 +203,17 @@ export const attendanceRepository = {
   /**
    * Phase 7.5 — Crash Recovery & Self-Healing.
    *
-   * Selects the minimal columns required to identify orphaned sessions:
-   *   - id              → enqueue key (only field consumed by the caller)
-   *   - check_out_at    → used to detect summaries that predate the final checkout
-   *   - session_summaries(updated_at) → left-join to detect missing/stale rows
-   *
-   * Applies a hard row limit and stable ascending ordering so the result is
-   * deterministic and bounded regardless of platform size.
-   *
+   * Selects the minimal columns required to identify orphaned sessions.
    * Runs against the service role key — intentionally bypasses RLS to
    * sweep all tenant partitions in a single bootstrap scan.
+   *
+   * Phase 15.5 — column names updated:
+   *   check_out_at → checkout_at
    */
   async findSessionsNeedingRecalculation(
     log: FastifyBaseLogger,
   ): Promise<{ id: string }[]> {
     // Hard cap on sessions scanned per recovery run.
-    // Prevents a large backlog from flooding the in-memory queue on every restart.
-    // Oldest unprocessed sessions are prioritised via ascending order.
     const RECOVERY_SCAN_LIMIT = 500;
 
     const { data, error } = await supabaseServiceClient
@@ -224,14 +221,14 @@ export const attendanceRepository = {
       .select(
         `
                 id,
-                check_out_at,
+                checkout_at,
                 session_summaries (
-                    updated_at
+                    computed_at
                 )
             `,
       )
-      .not("check_out_at", "is", null)
-      .order("check_out_at", { ascending: true })
+      .not("checkout_at", "is", null)
+      .order("checkout_at", { ascending: true })
       .limit(RECOVERY_SCAN_LIMIT);
 
     if (error) {
@@ -244,25 +241,20 @@ export const attendanceRepository = {
     const requiresRecalculation: { id: string }[] = [];
 
     for (const row of data) {
-      // Supabase returns a 1:1 left-join as either an object or an array depending
-      // on schema setup — normalise defensively to avoid runtime surprises.
       const summaries = Array.isArray(row.session_summaries)
         ? row.session_summaries
         : row.session_summaries
           ? [row.session_summaries]
           : [];
 
-      const summary = summaries[0] as { updated_at: string } | undefined;
-      const checkOutAt = row.check_out_at as string;
+      const summary = summaries[0] as { computed_at: string } | undefined;
+      const checkoutAt = row.checkout_at as string;
 
       if (!summary) {
-        // No summary row at all — calculation was never persisted
         requiresRecalculation.push({ id: row.id });
       } else if (
-        new Date(summary.updated_at).getTime() < new Date(checkOutAt).getTime()
+        new Date(summary.computed_at).getTime() < new Date(checkoutAt).getTime()
       ) {
-        // Summary exists but was generated before the final check_out_at timestamp —
-        // the checkout recalculation was enqueued but never persisted (process crash).
         requiresRecalculation.push({ id: row.id });
       }
     }

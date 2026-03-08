@@ -102,11 +102,12 @@ export const expensesService = {
       );
     }
 
-    // 3. Apply the new status.
+    // 3. Apply the new status, recording the reviewer identity.
     const updated = await expensesRepository.updateExpenseStatus(
       request,
       expenseId,
       body.status,
+      request.user.sub,
     );
 
     // 4. Structured log with event tag for observability.
@@ -117,7 +118,7 @@ export const expensesService = {
       {
         event,
         expenseId: updated.id,
-        userId: updated.user_id,
+        employeeId: updated.employee_id,
         adminId: request.user.sub,
         organizationId: request.organizationId,
         amount: updated.amount,

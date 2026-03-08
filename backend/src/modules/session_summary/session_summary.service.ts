@@ -92,9 +92,9 @@ async function streamAndCalculateDistance(
     if (totalPoints > env.MAX_POINTS_PER_SESSION) {
       throw new BadRequestError(
         `Session exceeds the maximum allowed GPS points ` +
-          `(${env.MAX_POINTS_PER_SESSION}). ` +
-          `Recalculation rejected to protect the event loop. ` +
-          `Raise MAX_POINTS_PER_SESSION to override.`,
+        `(${env.MAX_POINTS_PER_SESSION}). ` +
+        `Recalculation rejected to protect the event loop. ` +
+        `Raise MAX_POINTS_PER_SESSION to override.`,
       );
     }
 
@@ -169,8 +169,8 @@ function validateSessionDuration(
   if (durationHours > env.MAX_SESSION_DURATION_HOURS) {
     throw new BadRequestError(
       `Session ${sessionId} has an abnormal duration of ${durationHours.toFixed(1)} hours ` +
-        `(maximum allowed: ${env.MAX_SESSION_DURATION_HOURS} hours). ` +
-        `Recalculation rejected. Raise MAX_SESSION_DURATION_HOURS to override.`,
+      `(maximum allowed: ${env.MAX_SESSION_DURATION_HOURS} hours). ` +
+      `Recalculation rejected. Raise MAX_SESSION_DURATION_HOURS to override.`,
     );
   }
 
@@ -207,8 +207,8 @@ export const sessionSummaryService = {
 
     // 2. Guard: reject sessions with abnormal durations before streaming starts
     const durationSeconds = validateSessionDuration(
-      session.check_in_at,
-      session.check_out_at,
+      session.checkin_at,
+      session.checkout_at,
       session.id,
     );
 
@@ -223,12 +223,14 @@ export const sessionSummaryService = {
 
     // 4. Persist summary (upsert — idempotent on session_id)
     await sessionSummaryRepository.upsertSummary(request, {
-      session_id: session.id,
       organization_id: session.organization_id,
-      user_id: session.user_id,
-      total_distance_meters: totalDistanceMeters,
-      total_points: totalPoints,
-      duration_seconds: durationSeconds,
+      session_id: session.id,
+      total_distance_km: Math.round(totalDistanceMeters / 10) / 100, // convert m → km
+      total_duration_seconds: durationSeconds,
+      avg_speed_kmh:
+        durationSeconds > 0
+          ? Math.round((totalDistanceMeters / 1000 / (durationSeconds / 3600)) * 100) / 100
+          : 0,
     });
 
     // 5. Update observability counters
@@ -238,7 +240,7 @@ export const sessionSummaryService = {
     request.log.info(
       {
         sessionId,
-        userId: session.user_id,
+        employeeId: session.employee_id,
         organizationId: session.organization_id,
         totalDistanceMeters,
         durationSeconds,
@@ -250,9 +252,8 @@ export const sessionSummaryService = {
 
     return {
       session_id: session.id,
-      total_distance_meters: totalDistanceMeters,
-      duration_seconds: durationSeconds,
-      total_points: totalPoints,
+      total_distance_km: Math.round(totalDistanceMeters / 10) / 100,
+      total_duration_seconds: durationSeconds,
     };
   },
 
@@ -277,7 +278,7 @@ export const sessionSummaryService = {
     // 1. Fetch session data via service role (worker has no tenant context yet)
     const { data: sessionData, error: sessionErr } = await supabase
       .from("attendance_sessions")
-      .select("id, user_id, organization_id, check_in_at, check_out_at")
+      .select("id, employee_id, organization_id, checkin_at, checkout_at")
       .eq("id", sessionId)
       .single();
 
@@ -289,8 +290,8 @@ export const sessionSummaryService = {
 
     // 2. Guard: reject sessions with abnormal durations before streaming starts
     const durationSeconds = validateSessionDuration(
-      sessionData.check_in_at as string,
-      sessionData.check_out_at as string | null,
+      sessionData.checkin_at as string,
+      sessionData.checkout_at as string | null,
       sessionData.id as string,
     );
 
@@ -311,12 +312,14 @@ export const sessionSummaryService = {
     } as unknown as FastifyRequest;
 
     await sessionSummaryRepository.upsertSummary(workerCtx, {
-      session_id: sessionData.id as string,
       organization_id: sessionData.organization_id as string,
-      user_id: sessionData.user_id as string,
-      total_distance_meters: totalDistanceMeters,
-      total_points: totalPoints,
-      duration_seconds: durationSeconds,
+      session_id: sessionData.id as string,
+      total_distance_km: Math.round(totalDistanceMeters / 10) / 100,
+      total_duration_seconds: durationSeconds,
+      avg_speed_kmh:
+        durationSeconds > 0
+          ? Math.round((totalDistanceMeters / 1000 / (durationSeconds / 3600)) * 100) / 100
+          : 0,
     });
 
     // 5. Update observability counters
@@ -326,7 +329,7 @@ export const sessionSummaryService = {
     fastifyApp.log.info(
       {
         sessionId,
-        userId: sessionData.user_id,
+        employeeId: sessionData.employee_id,
         organizationId: sessionData.organization_id,
         totalDistanceMeters,
         durationSeconds,
@@ -339,9 +342,8 @@ export const sessionSummaryService = {
 
     return {
       session_id: sessionData.id as string,
-      total_distance_meters: totalDistanceMeters,
-      duration_seconds: durationSeconds,
-      total_points: totalPoints,
+      total_distance_km: Math.round(totalDistanceMeters / 10) / 100,
+      total_duration_seconds: durationSeconds,
     };
   },
 };

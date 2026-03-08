@@ -96,14 +96,18 @@ export const analyticsService = {
       sessionIds,
     );
 
-    let totalDistanceMeters = 0;
+    let totalDistanceKm = 0;
     let totalDurationSeconds = 0;
-    const activeUserIds = new Set<string>();
+    const activeEmployeeIds = new Set<string>();
+
+    // Group by session_id from summary rows; employee identity resolved via sessions map
+    const sessionToEmployee = new Map(sessions.map((s) => [s.id, s.employee_id]));
 
     for (const row of summaries) {
-      totalDistanceMeters += row.total_distance_meters;
-      totalDurationSeconds += row.duration_seconds;
-      activeUserIds.add(row.user_id);
+      totalDistanceKm += row.total_distance_km;
+      totalDurationSeconds += row.total_duration_seconds;
+      const empId = sessionToEmployee.get(row.session_id);
+      if (empId) activeEmployeeIds.add(empId);
     }
 
     // Step 3: expense aggregation in same date range
@@ -118,12 +122,12 @@ export const analyticsService = {
 
     return {
       totalSessions,
-      totalDistanceMeters: Math.round(totalDistanceMeters * 100) / 100,
+      totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
       totalDurationSeconds,
       totalExpenses,
       approvedExpenseAmount,
       rejectedExpenseAmount,
-      activeUsersCount: activeUserIds.size,
+      activeEmployeesCount: activeEmployeeIds.size,
     };
   },
 
@@ -170,12 +174,12 @@ export const analyticsService = {
       sessionIds,
     );
 
-    let totalDistanceMeters = 0;
+    let totalDistanceKm = 0;
     let totalDurationSeconds = 0;
 
     for (const row of summaries) {
-      totalDistanceMeters += row.total_distance_meters;
-      totalDurationSeconds += row.duration_seconds;
+      totalDistanceKm += row.total_distance_km;
+      totalDurationSeconds += row.total_duration_seconds;
     }
 
     // Expense aggregation for this user in the same date range
@@ -191,7 +195,7 @@ export const analyticsService = {
 
     const averageDistancePerSession =
       sessionsCount > 0
-        ? Math.round((totalDistanceMeters / sessionsCount) * 100) / 100
+        ? Math.round((totalDistanceKm / sessionsCount) * 100) / 100
         : 0;
 
     const averageSessionDurationSeconds =
@@ -201,7 +205,7 @@ export const analyticsService = {
 
     return {
       sessionsCount,
-      totalDistanceMeters: Math.round(totalDistanceMeters * 100) / 100,
+      totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
       totalDurationSeconds,
       totalExpenses,
       approvedExpenseAmount,
@@ -247,34 +251,37 @@ export const analyticsService = {
       sessionIds,
     );
 
-    // Group by user_id — O(n) single pass over pre-aggregated summary rows
-    const userMap = new Map<
+    // Group by session_id then join to employee via sessions map — O(n) single pass
+    const sessionToEmployee = new Map(sessions.map((s) => [s.id, s.employee_id]));
+    const employeeMap = new Map<
       string,
       {
-        totalDistanceMeters: number;
+        totalDistanceKm: number;
         totalDurationSeconds: number;
         sessionsCount: number;
       }
     >();
 
     for (const row of summaries) {
-      const existing = userMap.get(row.user_id) ?? {
-        totalDistanceMeters: 0,
+      const employeeId = sessionToEmployee.get(row.session_id);
+      if (!employeeId) continue;
+      const existing = employeeMap.get(employeeId) ?? {
+        totalDistanceKm: 0,
         totalDurationSeconds: 0,
         sessionsCount: 0,
       };
-      existing.totalDistanceMeters += row.total_distance_meters;
-      existing.totalDurationSeconds += row.duration_seconds;
+      existing.totalDistanceKm += row.total_distance_km;
+      existing.totalDurationSeconds += row.total_duration_seconds;
       existing.sessionsCount += 1;
-      userMap.set(row.user_id, existing);
+      employeeMap.set(employeeId, existing);
     }
 
     // Convert to array and sort descending by the chosen metric
-    const entries = [...userMap.entries()];
+    const entries = [...employeeMap.entries()];
 
     if (metric === "distance") {
       entries.sort(
-        (a, b) => b[1].totalDistanceMeters - a[1].totalDistanceMeters,
+        (a, b) => b[1].totalDistanceKm - a[1].totalDistanceKm,
       );
     } else if (metric === "duration") {
       entries.sort(
@@ -286,22 +293,22 @@ export const analyticsService = {
     }
 
     // Take top N and shape the response to only include the relevant metric field
-    return entries.slice(0, limit).map(([userId, stats]) => {
+    return entries.slice(0, limit).map(([employeeId, stats]) => {
       if (metric === "distance") {
         return {
-          userId,
-          totalDistanceMeters: Math.round(stats.totalDistanceMeters * 100) / 100,
+          employeeId,
+          totalDistanceKm: Math.round(stats.totalDistanceKm * 100) / 100,
         };
       }
       if (metric === "duration") {
         return {
-          userId,
+          employeeId,
           totalDurationSeconds: stats.totalDurationSeconds,
         };
       }
       // metric === "sessions"
       return {
-        userId,
+        employeeId,
         sessionsCount: stats.sessionsCount,
       };
     });

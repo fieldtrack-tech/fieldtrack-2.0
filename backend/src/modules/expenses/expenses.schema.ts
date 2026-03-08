@@ -1,28 +1,14 @@
 import { z } from "zod";
+import type { Expense, ExpenseStatus } from "../../types/db.js";
 
 // ─── Database Row Type ────────────────────────────────────────────────────────
+// Phase 16 — confirmed final schema for expenses.
 
 export const EXPENSE_STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const;
-export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
-
-export interface Expense {
-  id: string;
-  organization_id: string;
-  user_id: string;
-  amount: number;
-  description: string;
-  status: ExpenseStatus;
-  receipt_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type { ExpenseStatus, Expense };
 
 // ─── Request Schemas ──────────────────────────────────────────────────────────
 
-/**
- * Body schema for POST /expenses.
- * Enforces positive amount and minimum description length.
- */
 export const createExpenseBodySchema = z.object({
   amount: z
     .number({ error: "amount must be a number" })
@@ -39,10 +25,6 @@ export const createExpenseBodySchema = z.object({
 
 export type CreateExpenseBody = z.infer<typeof createExpenseBodySchema>;
 
-/**
- * Body schema for PATCH /admin/expenses/:id.
- * ADMIN may only transition to APPROVED or REJECTED (not back to PENDING).
- */
 export const updateExpenseStatusBodySchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"], {
     error: "status must be APPROVED or REJECTED",
@@ -53,9 +35,6 @@ export type UpdateExpenseStatusBody = z.infer<
   typeof updateExpenseStatusBodySchema
 >;
 
-/**
- * Shared pagination schema for expense list endpoints.
- */
 export const expensePaginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),

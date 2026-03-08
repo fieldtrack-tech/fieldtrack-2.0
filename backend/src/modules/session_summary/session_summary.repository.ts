@@ -4,27 +4,36 @@ import type { FastifyRequest } from "fastify";
 import type { SessionSummary } from "./session_summary.schema.js";
 
 /**
- * Session Summary repository — Supabase queries for the session_summaries table.
- * Operations are strictly tenant-isolated.
+ * Session Summary repository — Supabase queries for session_summaries.
+ *
+ * Phase 16 confirmed column set:
+ *   id, organization_id, session_id, total_distance_km,
+ *   total_duration_seconds, avg_speed_kmh, computed_at
+ *
+ * organization_id is present on session_summaries — enforceTenant() is
+ * therefore applied on reads for defense-in-depth.
  */
 export const sessionSummaryRepository = {
-    /**
-     * Upsert a session summary.
-     * This is called when a session is checked out or explicitly recalculated.
-     */
     async upsertSummary(
         _request: FastifyRequest,
-        summary: Omit<SessionSummary, "updated_at">,
+        summary: Omit<SessionSummary, "computed_at">,
     ): Promise<SessionSummary> {
-        const updated_at = new Date().toISOString();
+        const computed_at = new Date().toISOString();
 
         const { data: record, error } = await supabase
             .from("session_summaries")
-            .upsert({
-                ...summary,
-                updated_at,
-            }, { onConflict: "session_id" })
-            .select("*")
+            .upsert(
+                {
+                    organization_id: summary.organization_id,
+                    session_id: summary.session_id,
+                    total_distance_km: summary.total_distance_km,
+                    total_duration_seconds: summary.total_duration_seconds,
+                    avg_speed_kmh: summary.avg_speed_kmh,
+                    computed_at,
+                },
+                { onConflict: "session_id" },
+            )
+            .select("organization_id, session_id, total_distance_km, total_duration_seconds, avg_speed_kmh, computed_at")
             .single();
 
         if (error) {
@@ -33,24 +42,18 @@ export const sessionSummaryRepository = {
         return record as SessionSummary;
     },
 
-    /**
-     * Get summary for a specific session.
-     */
     async getSummary(
         request: FastifyRequest,
         sessionId: string,
     ): Promise<SessionSummary | null> {
         const baseQuery = supabase
             .from("session_summaries")
-            .select("*")
+            .select("organization_id, session_id, total_distance_km, total_duration_seconds, avg_speed_kmh, computed_at")
             .eq("session_id", sessionId);
 
-        const { data, error } = await enforceTenant(request, baseQuery)
-            .single();
+        const { data, error } = await enforceTenant(request, baseQuery).single();
 
-        if (error && error.code === "PGRST116") {
-            return null;
-        }
+        if (error && error.code === "PGRST116") return null;
         if (error) {
             throw new Error(`Failed to fetch session summary: ${error.message}`);
         }

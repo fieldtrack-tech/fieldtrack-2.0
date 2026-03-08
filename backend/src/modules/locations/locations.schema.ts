@@ -1,22 +1,16 @@
 import { z } from "zod";
+import type { GpsLocation } from "../../types/db.js";
 
 // ─── Database Row Type ───────────────────────────────────
+// Phase 16 — confirmed final schema for gps_locations.
+//
+// organization_id is included for direct enforceTenant() filtering,
+// avoiding a JOIN to attendance_sessions on every location query.
 
-export interface LocationRecord {
-    id: string;
-    user_id: string;
-    organization_id: string;
-    session_id: string;
-    latitude: number;
-    longitude: number;
-    accuracy: number;
-    recorded_at: string;
-    created_at: string;
-}
+export type LocationRecord = GpsLocation;
 
 // ─── Request Schemas ─────────────────────────────────────
 
-// Two minutes in milliseconds for recorded_at validation
 const TWO_MINUTES_MS = 2 * 60 * 1000;
 
 export const createLocationSchema = z.object({
@@ -27,7 +21,6 @@ export const createLocationSchema = z.object({
     recorded_at: z.string().datetime().refine((val) => {
         const recordedTime = new Date(val).getTime();
         const now = Date.now();
-        // Cannot be more than 2 minutes in the future
         return recordedTime <= now + TWO_MINUTES_MS;
     }, "recorded_at cannot be more than 2 minutes in the future"),
 });

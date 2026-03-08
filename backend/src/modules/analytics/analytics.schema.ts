@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AttendanceSession, SessionSummaryRow, Expense } from "../../types/db.js";
 
 // ─── Query Parameter Schemas ──────────────────────────────────────────────────
 
@@ -46,45 +47,41 @@ export type TopPerformersQuery = z.infer<typeof topPerformersQuerySchema>;
  * Minimal row shape fetched from session_summaries.
  * Only the fields needed for aggregation are selected — never select("*").
  */
-export interface MinimalSummaryRow {
-  user_id: string;
-  total_distance_meters: number;
-  duration_seconds: number;
-}
+export type MinimalSummaryRow = Pick<SessionSummaryRow,
+  "session_id" | "total_distance_km" | "total_duration_seconds"
+>;
 
 /**
  * Minimal row shape fetched from attendance_sessions.
  * Used only to resolve session IDs for a given date range.
  */
-export interface MinimalSessionRow {
-  id: string;
-  user_id: string;
-}
+export type MinimalSessionRow = Pick<AttendanceSession,
+  "id" | "employee_id"
+>;
 
 /**
  * Minimal row shape fetched from expenses.
  * Only amount and status needed for all analytics aggregations.
  */
-export interface MinimalExpenseRow {
-  amount: number;
-  status: string;
-}
+export type MinimalExpenseRow = Pick<Expense,
+  "amount" | "status"
+>;
 
 // ─── Response Data Types ──────────────────────────────────────────────────────
 
 export interface OrgSummaryData {
   totalSessions: number;
-  totalDistanceMeters: number;
+  totalDistanceKm: number;
   totalDurationSeconds: number;
   totalExpenses: number;
   approvedExpenseAmount: number;
   rejectedExpenseAmount: number;
-  activeUsersCount: number;
+  activeEmployeesCount: number;
 }
 
 export interface UserSummaryData {
   sessionsCount: number;
-  totalDistanceMeters: number;
+  totalDistanceKm: number;
   totalDurationSeconds: number;
   totalExpenses: number;
   approvedExpenseAmount: number;
@@ -93,8 +90,8 @@ export interface UserSummaryData {
 }
 
 export interface TopPerformerEntry {
-  userId: string;
-  totalDistanceMeters?: number;
+  employeeId: string;
+  totalDistanceKm?: number;
   totalDurationSeconds?: number;
   sessionsCount?: number;
 }
