@@ -2,6 +2,7 @@
 set -euo pipefail
 
 IMAGE="ghcr.io/rajashish147/fieldtrack-backend:${1:-latest}"
+IMAGE_SHA="${1:-latest}"
 
 BLUE_NAME="backend-blue"
 GREEN_NAME="backend-green"
@@ -14,6 +15,8 @@ NETWORK="fieldtrack_network"
 
 ENV_FILE="/home/ashish/FieldTrack-2.0/backend/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack"
+DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/backend/.deploy_history"
+MAX_HISTORY=5
 
 MAX_HEALTH_ATTEMPTS=20
 HEALTH_INTERVAL=3
@@ -21,6 +24,7 @@ HEALTH_INTERVAL=3
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
 echo "========================================="
+echo "Image SHA: $IMAGE_SHA"
 
 echo "[1/7] Pulling image..."
 docker pull "$IMAGE"
@@ -103,3 +107,17 @@ echo "========================================="
 echo "Deployment successful."
 echo "$INACTIVE_NAME container is now LIVE."
 echo "========================================="
+
+# Record successful deployment for rollback capability
+# Maintain history of last MAX_HISTORY deployments
+if [ -f "$DEPLOY_HISTORY" ]; then
+    # Prepend new SHA and keep only MAX_HISTORY entries
+    (echo "$IMAGE_SHA"; head -n $((MAX_HISTORY - 1)) "$DEPLOY_HISTORY") > "$DEPLOY_HISTORY.tmp"
+    mv "$DEPLOY_HISTORY.tmp" "$DEPLOY_HISTORY"
+else
+    # Create new history file
+    echo "$IMAGE_SHA" > "$DEPLOY_HISTORY"
+fi
+
+echo "Deployment history updated: $IMAGE_SHA"
+

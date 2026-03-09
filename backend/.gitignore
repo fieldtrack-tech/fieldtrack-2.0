@@ -29,3 +29,7 @@ Thumbs.db
 
 # Coverage
 coverage/
+
+# Deployment history (VPS only)
+.deploy_history
+.last_deploy

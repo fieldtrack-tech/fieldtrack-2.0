@@ -34,6 +34,24 @@ npm run dev
 | `npm run dev`   | Start dev server with hot reload   |
 | `npm run build` | Compile TypeScript to `dist/`      |
 | `npm start`     | Run compiled production server     |
+| `npm test`      | Run test suite with Vitest         |
+
+## Deployment
+
+### Production Deployment
+
+```bash
+# Deploy specific version (automated via CI)
+./scripts/deploy-bluegreen.sh a4f91c2
+
+# Rollback to previous version
+./scripts/rollback.sh
+
+# Deploy specific historical version
+./scripts/deploy-bluegreen.sh 7b3e9f1
+```
+
+See [Rollback System Documentation](./docs/ROLLBACK_SYSTEM.md) for detailed deployment and rollback procedures.
 
 ## Project Structure
 
