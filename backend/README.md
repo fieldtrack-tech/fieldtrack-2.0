@@ -51,7 +51,7 @@ npm run dev
 ./scripts/deploy-bluegreen.sh 7b3e9f1
 ```
 
-See [Rollback System Documentation](./docs/ROLLBACK_SYSTEM.md) for detailed deployment and rollback procedures.
+See [Rollback System Documentation](../docs/ROLLBACK_SYSTEM.md) for detailed deployment and rollback procedures.
 
 ## Project Structure
 
@@ -65,11 +65,10 @@ src/
 ├── routes/            # Route modules
 ├── middleware/        # Auth & request middleware
 ├── modules/           # Business domain modules
-│   ├── organization/
-│   ├── user/
 │   ├── attendance/
-│   ├── location/
-│   └── expense/
+│   ├── expenses/
+│   ├── locations/
+│   └── session_summary/
 ├── workers/           # BullMQ background job workers
 ├── types/             # TypeScript type definitions
 └── utils/             # Shared utilities
@@ -91,6 +90,8 @@ docker run -p 3000:3000 --env-file .env fieldtrack-backend
 | ------ | --------- | -------------------- | -------- |
 | GET    | `/health` | Health check         | None     |
 
+See [API Reference](../docs/API_REFERENCE.md) for the complete endpoint list.
+
 ## Environment Variables
 
 | Variable                   | Description                 | Required |
@@ -105,3 +106,15 @@ docker run -p 3000:3000 --env-file .env fieldtrack-backend
 | `TEMPO_ENDPOINT`           | Tempo OTLP endpoint         | No       |
 
 See `.env.example` for a complete list of environment variables.
+
+## Documentation
+
+Detailed documentation is available in the [`/docs`](../docs) directory:
+
+- [API Reference](../docs/API_REFERENCE.md) — all endpoints, auth requirements, request/response schemas
+- [Architecture](../docs/ARCHITECTURE.md) — system design, request lifecycle, tenant isolation, key decisions
+- [Walkthrough](../docs/walkthrough.md) — phase-by-phase development history and technical deep-dives
+- [Rollback System](../docs/ROLLBACK_SYSTEM.md) — deployment tracking and rollback architecture
+- [Rollback Quick Reference](../docs/ROLLBACK_QUICKREF.md) — fast command reference for deployment and rollback
+
+See [CHANGELOG.md](../CHANGELOG.md) at the repo root for a full project history.

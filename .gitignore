@@ -5,8 +5,24 @@ infra/grafana/data/
 
 # Environment files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Test coverage
+coverage/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Deployment history (VPS-side file, never committed)
+.deploy_history
+.last_deploy
 
 # OS files
 .DS_Store
@@ -17,3 +33,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Logs
+*.log
+logs/
+npm-debug.log*

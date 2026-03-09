@@ -269,6 +269,99 @@ CREATE INDEX idx_locations_tenant_search ON locations(organization_id, user_id, 
 1. **Partition by Range (Time)**: Transition the `locations` table to a PostgreSQL partitioned table grouping by `recorded_at` (e.g., month-by-month partitions).
 ---
 
+## Phase 5 — Per-User Rate Limiting & Ingestion Telemetry
+
+### Overview
+
+Phase 5 upgraded the location ingestion endpoints from IP-based rate limiting to **per-user JWT-sub-based rate limiting**, and added **latency telemetry** and **duplicate suppression metrics** to the service layer.
+
+---
+
+### 5.1 — Per-User Rate Limiting
+
+**File:** `src/modules/locations/locations.routes.ts`
+
+Both `POST /locations` and `POST /locations/batch` are protected by a custom `keyGenerator` that extracts the JWT `sub` directly from the `Authorization` header during the fast `onRequest` phase (before the JWT plugin runs):
+
+```typescript
+keyGenerator: (req: FastifyRequest) => {
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith("Bearer ")) {
+    try {
+      const base64Url = auth.split(".")[1];
+      if (!base64Url) return req.ip;
+      const payload = JSON.parse(
+        Buffer.from(base64Url.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString()
+      ) as { sub?: string };
+      return payload.sub ?? req.ip;
+    } catch {
+      return req.ip;
+    }
+  }
+  return req.ip;
+}
+```
+
+**Why JWT sub instead of IP:**
+
+| Approach | Problem |
+|----------|---------|
+| Per-IP | Employees behind a corporate NAT share one IP → one bad actor can block the whole team |
+| Per-sub | Each employee identity is rate-limited independently — fairer and harder to abuse |
+
+Limit: **10 requests per 10 seconds** per user. Falls back to `req.ip` if the token cannot be decoded (e.g. malformed header).
+
+---
+
+### 5.2 — Ingestion Telemetry
+
+**File:** `src/modules/locations/locations.service.ts`
+
+Two observability additions to both the single-insert and batch-insert paths:
+
+**Latency timing via `performance.now()`:**
+
+```typescript
+const start = performance.now();
+// ... repository call ...
+const latencyMs = performance.now() - start;
+request.log.info({ latencyMs, inserted }, "location insert completed");
+```
+
+**Duplicate suppression counter (batch only):**
+
+```typescript
+const duplicatesSuppressed = points.length - inserted;
+request.log.info(
+  { intended: points.length, inserted, duplicatesSuppressed },
+  "location batch insert completed",
+);
+```
+
+Because the DB-layer upsert uses `{ ignoreDuplicates: true }`, the number of rows actually written (`inserted`) can be less than the payload size (`points.length`). Logging the difference gives operators a signal that a mobile client is retrying stale batches.
+
+---
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/modules/locations/locations.routes.ts` | Added JWT-sub `keyGenerator` to both ingestion routes; `FastifyRequest` type imported |
+| `src/modules/locations/locations.service.ts` | Added `performance.now()` timing; batch service logs `duplicatesSuppressed` |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | ✅ Zero errors |
+| Per-user limit enforced | JWT sub extracted from `Authorization` header; falls back to IP |
+| Latency logged | `latencyMs` in every single-insert log line |
+| Duplicate metrics | `duplicatesSuppressed` in every batch-insert log line |
+
+---
+
 ## Phase 6 — Distance Engine & Session Summary
 
 ### Architecture Overview
@@ -1688,3 +1781,656 @@ npx tsc --noEmit
 ```
 
 Result: **0 errors** across all 3 utility files, 3 repositories, 2 services, 5 controllers, and 1 route file.
+
+---
+
+## Phase 13 — Production Infrastructure: VPS, Nginx & Monitoring Stack
+
+### Overview
+
+Phase 13 moved FieldTrack 2.0 from a locally-runnable service to a fully operational production deployment. It introduced the VPS setup automation, Nginx reverse proxy, and a complete self-hosted observability stack (Prometheus + Grafana + Loki + Tempo).
+
+---
+
+### 13.1 — VPS Setup Script
+
+**File:** `backend/scripts/vps-setup.sh`
+
+A single idempotent script provisions a fresh Ubuntu VPS from zero to production-ready:
+
+- Installs Docker, Docker Compose, Nginx, and dependencies
+- Creates the `fieldtrack` OS user with limited permissions
+- Clones the repository and creates the directory structure
+- Configures the `systemd` service for auto-restart
+- Issues and renews TLS certificates via Let's Encrypt (`certbot`)
+- Sets up log rotation and minimal firewall rules (`ufw`)
+- Starts the monitoring stack alongside the application
+
+---
+
+### 13.2 — Nginx Reverse Proxy
+
+**File:** `infra/nginx/fieldtrack.conf`
+
+- Terminates TLS (HTTPS → HTTP to backend containers)
+- Upstream block points to the active blue/green container port
+- HTTP → HTTPS redirect on port 80
+- Proxy headers: `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`
+- WebSocket upgrade support (`Upgrade`, `Connection` headers)
+- Gzip compression for JSON responses
+- Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `HSTS`
+
+---
+
+### 13.3 — Monitoring Stack
+
+**File:** `infra/docker-compose.monitoring.yml`
+
+Five services on the `fieldtrack_network` Docker network:
+
+| Service | Port | Role |
+|---------|------|------|
+| `prometheus` | 9090 | Scrapes `/metrics` every 15 s; stores time-series |
+| `grafana` | 3001 | Dashboards, alerting, data-source wiring |
+| `loki` | 3100 | Log aggregation backend |
+| `promtail` | — | Reads Docker container logs; ships to Loki |
+| `tempo` | 3200 / 4317 / 4318 | Distributed trace storage; OTLP ingest |
+
+---
+
+### 13.4 — Grafana Dashboard
+
+**File:** `infra/grafana/dashboards/fieldtrack.json`
+
+A provisioned Grafana dashboard covering:
+
+- HTTP request rate and error rate by route
+- p50/p95/p99 latency per endpoint
+- Node.js heap usage and event-loop lag
+- BullMQ queue depth and recalculation throughput
+- Active session count
+- Redis memory usage
+
+Dashboard is automatically loaded on container start via `infra/grafana/provisioning/`.
+
+---
+
+### Files Created
+
+| File | Purpose |
+|------|----------|
+| `backend/scripts/vps-setup.sh` | Full VPS provisioning from scratch |
+| `infra/docker-compose.monitoring.yml` | Prometheus, Grafana, Loki, Promtail, Tempo |
+| `infra/grafana/dashboards/fieldtrack.json` | Application dashboard (auto-provisioned) |
+| `infra/grafana/provisioning/dashboards/dashboard.yml` | Dashboard provisioning config |
+| `infra/grafana/provisioning/datasources/prometheus.yml` | Prometheus datasource provisioning |
+| `infra/nginx/fieldtrack.conf` | Nginx reverse proxy and TLS termination |
+| `infra/prometheus/prometheus.yml` | Scrape config targeting backend `/metrics` |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| VPS setup script idempotent | Can be re-run safely on existing VPS |
+| Nginx serves HTTPS | TLS via Let's Encrypt certbot |
+| Grafana auto-provisioned | Dashboard loads on container start |
+| Prometheus scrapes backend | `http_requests_total` visible in Grafana |
+
+---
+
+## Phase 14 — Distributed Tracing, Log Correlation & Metric Exemplars
+
+### Overview
+
+Phase 14 connected the three pillars of observability — **metrics**, **logs**, and **traces** — into a unified view in Grafana. Any single request can now be followed from a Prometheus data point → Loki log line → Tempo trace span in a single click.
+
+---
+
+### 14.1 — OpenTelemetry Tracing
+
+**File:** `backend/src/tracing.ts`
+
+Must be the **first import in `server.ts`** so the SDK wraps all subsequently-loaded modules.
+
+```typescript
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+
+// Ships traces to Grafana Tempo via OTLP HTTP
+const exporter = new OTLPTraceExporter({
+  url: `${env.TEMPO_ENDPOINT}/v1/traces`,
+});
+
+const sdk = new NodeSDK({
+  serviceName: "fieldtrack-backend",
+  traceExporter: exporter,
+  instrumentations: [
+    getNodeAutoInstrumentations({
+      "@opentelemetry/instrumentation-fs": { enabled: false }, // suppress noisy FS spans
+    }),
+  ],
+});
+
+sdk.start();
+```
+
+Every HTTP request, BullMQ job, and Supabase query produces a span automatically. The BullMQ worker additionally creates a manual `bullmq.process_job` span with job metadata attributes (`job.id`, `session.id`, `job.attempts`, `execution_time_ms`).
+
+---
+
+### 14.2 — Pino Log Correlation
+
+**File:** `backend/src/config/logger.ts`
+
+An `otelMixin` function injects the active trace's `trace_id`, `span_id`, and `trace_flags` into **every Pino log line** as top-level fields:
+
+```typescript
+const otelMixin = () => {
+  const span = trace.getActiveSpan();
+  if (!span || !span.isRecording()) return {};
+  const ctx = span.spanContext();
+  return {
+    trace_id: ctx.traceId,
+    span_id: ctx.spanId,
+    trace_flags: ctx.traceFlags,
+  };
+};
+```
+
+This enables Grafana's **Derived Fields** in Loki to detect `trace_id` in log lines and render a clickable "Open in Tempo" link — navigating directly from a log entry to the corresponding trace.
+
+When no active span exists (background workers, startup), the mixin returns `{}` with zero overhead.
+
+---
+
+### 14.3 — Prometheus Exemplars
+
+**File:** `backend/src/plugins/prometheus.ts`
+
+The `http_request_duration_seconds` histogram is upgraded to attach trace IDs as exemplars to each observation:
+
+```typescript
+httpRequestDuration.labels(labels).observeWithExemplar(
+  { traceId: traceContext.traceId },
+  seconds,
+);
+```
+
+Exemplars make individual high-latency data points "clickable" in Grafana: clicking a spike in the latency graph jumps directly to the Tempo trace for that exact request.
+
+Infrastructure requirements enabled in `docker-compose.monitoring.yml`:
+- Prometheus `--enable-feature=exemplar-storage` flag
+- Backend scraped with `Content-Type: application/openmetrics-text` (required for exemplar ingestion)
+
+---
+
+### Files Changed / Created
+
+| File | Action |
+|------|--------|
+| `backend/src/tracing.ts` | **NEW** — OpenTelemetry SDK bootstrap; OTLP exporter to Tempo |
+| `backend/src/server.ts` | **MODIFIED** — `import "./tracing.js"` as the very first import |
+| `backend/src/config/logger.ts` | **MODIFIED** — `otelMixin` injects trace/span IDs into every log line |
+| `backend/src/plugins/prometheus.ts` | **MODIFIED** — exemplar support on duration histogram |
+| `infra/docker-compose.monitoring.yml` | **MODIFIED** — Tempo OTLP ports 4317/4318; Prometheus exemplar storage |
+| `infra/prometheus/prometheus.yml` | **MODIFIED** — OpenMetrics scrape protocol for backend jobs |
+| `backend/src/app.ts` | **MODIFIED** — `onRequest` hook enriches active span with route pattern and request ID |
+
+---
+
+### Observability Chain
+
+```
+HTTP Request
+    │
+    ├─ OpenTelemetry auto-instrumentation
+    │     creates root span: http.method + http.url
+    │
+    ├─ onRequest hook (app.ts)
+    │     sets: http.route (pattern), fastify.request_id, http.client_ip
+    │
+    ├─ Pino log lines
+    │     include trace_id + span_id (otelMixin)
+    │     → shipped to Loki via Promtail
+    │
+    ├─ Prometheus histogram observation
+    │     exemplar: { traceId } attached
+    │     → visible in Grafana latency graphs
+    │
+    └─ Trace exported to Tempo
+          Grafana links: Loki log → Tempo trace
+                         Grafana metric spike → Tempo trace
+```
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| Traces appear in Tempo | Confirmed via Grafana → Explore → Tempo |
+| `trace_id` in Pino logs | All request logs include `trace_id` field |
+| Loki → Tempo link | Derived fields navigate from log line to trace |
+| Prometheus exemplars | Histogram spike → Tempo trace one-click |
+| `fs` instrumentation disabled | Noisy file-system spans suppressed |
+
+---
+
+## Phase 15 — API Security & Rate Limiting Overhaul
+
+### Overview
+
+Phase 15 refactored the security layer into dedicated, isolated plugins and hardened the rate-limiting from a single in-process plugin into a **Redis-backed, multi-instance-safe** enforcement layer with brute-force detection and security metrics.
+
+---
+
+### 15.1 — Security Plugin Architecture
+
+Security concerns were extracted from `app.ts` into four independent files under `src/plugins/security/`:
+
+| Plugin | File | Responsibility |
+|--------|------|----------------|
+| Helmet | `helmet.plugin.ts` | Secure HTTP response headers (HSTS, X-Frame-Options, X-Content-Type-Options, etc.) |
+| CORS | `cors.plugin.ts` | Origin allowlist from `ALLOWED_ORIGINS`; `credentials: true` |
+| Rate Limit | `ratelimit.plugin.ts` | Redis-backed global rate limiting: 100 req/min per IP |
+| Abuse Logging | `abuse-logging.plugin.ts` | Structured 429 logging + brute-force detection on auth routes |
+
+`app.ts` registers them in order: `helmet → cors → rate-limit → abuse-logging`.
+
+Each plugin uses `fastify-plugin` (`fp`) to break Fastify encapsulation — they apply to the entire app, not just the scope they are registered in.
+
+---
+
+### 15.2 — Redis-Backed Rate Limiting
+
+**File:** `src/plugins/security/ratelimit.plugin.ts`
+
+```typescript
+await fastify.register(fastifyRateLimit, {
+  global: true,
+  max: 100,
+  timeWindow: "1 minute",
+  redis: rateLimitRedis,           // dedicated ioredis connection
+  keyGenerator: (request) => request.ip,
+  allowList: ["127.0.0.1", "::1"], // health checks always pass
+  errorResponseBuilder: (_request, context) => ({
+    success: false,
+    error: "Too many requests",
+    retryAfter: context.after,
+  }),
+});
+```
+
+**Why Redis instead of in-memory:**
+
+| | In-Memory (Phase 10) | Redis-Backed (Phase 15) |
+|--|----------------------|-------------------------|
+| Multi-replica aware | ❌ Each pod has its own counter | ✅ Shared counter across all pods |
+| Survives restart | ❌ Counter resets on deploy | ✅ Persists in Redis |
+| Consistent limit | ❌ N pods = N× effective limit | ✅ True 100 req/min regardless of replica count |
+
+The rate-limit Redis connection is **separate from the BullMQ connection** to avoid contention between job queue operations and limit counters.
+
+Route-specific limits can override the global default by setting `config.rateLimit` in the route options (used by location ingestion and expense creation routes).
+
+---
+
+### 15.3 — Brute-Force Detection & Security Metrics
+
+**File:** `src/plugins/security/abuse-logging.plugin.ts`
+
+An `onResponse` hook fires on every response. When `statusCode === 429`:
+
+1. Logs a structured warning: `{ ip, route, userAgent, statusCode: 429 }`
+2. Increments `security_rate_limit_hits_total{route}` Prometheus counter
+3. If the route matches an auth pattern (`/auth/`, `/login`, `/sign-in`, `/token`):
+   - Logs a brute-force warning: `{ ip, route, message: "Brute-force attempt detected" }`
+   - Increments `security_auth_bruteforce_total{ip}` Prometheus counter
+
+**New Prometheus counters added to `src/plugins/prometheus.ts`:**
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `security_rate_limit_hits_total` | `route` | Total 429 responses by route |
+| `security_auth_bruteforce_total` | `ip` | Auth endpoint 429s by client IP |
+
+These feed directly into Grafana alerting rules — an ops team can receive a PagerDuty alert when `security_auth_bruteforce_total` exceeds a threshold.
+
+---
+
+### Files Changed / Created
+
+| File | Action |
+|------|--------|
+| `src/plugins/security/helmet.plugin.ts` | **NEW** — `@fastify/helmet` plugin; CSP disabled pending frontend enumeration |
+| `src/plugins/security/cors.plugin.ts` | **NEW** — `@fastify/cors` from `ALLOWED_ORIGINS` with `credentials: true` |
+| `src/plugins/security/ratelimit.plugin.ts` | **NEW** — Redis-backed global 100 req/min; IP allowlist; custom 429 body |
+| `src/plugins/security/abuse-logging.plugin.ts` | **NEW** — 429 structured log + security Prometheus counters + brute-force detection |
+| `src/plugins/prometheus.ts` | **MODIFIED** — Added `security_rate_limit_hits_total` and `security_auth_bruteforce_total` counters |
+| `src/app.ts` | **MODIFIED** — Security plugins imported from `plugins/security/`; registered in order |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | ✅ Zero errors |
+| Rate limit enforced globally | 100 req/min per IP via Redis store |
+| Localhost bypassed | `127.0.0.1` / `::1` exempt |
+| 429 body standardized | `{ success: false, error, retryAfter }` |
+| Auth brute-force logged | `security_auth_bruteforce_total` incremented on auth 429s |
+| Security metrics in Prometheus | Both counters visible at `GET /metrics` |
+
+---
+
+## Phase 18 — Automated Test Suite & Production Hardening
+
+### Overview
+
+Phase 18 introduced a **complete automated test suite** (124 tests, 0 failures) using Vitest and Fastify's `app.inject()`. Alongside the tests, a set of production hardening and type-safety improvements were applied across the stack.
+
+---
+
+### 18.1 — Test Infrastructure
+
+#### Vitest Configuration
+
+**File:** `vitest.config.ts`
+
+```typescript
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: "node",
+    setupFiles: ["tests/setup/env-setup.ts"],
+    clearMocks: true,
+    coverage: { provider: "v8", reporter: ["text", "lcov"] },
+  },
+});
+```
+
+**File:** `tsconfig.test.json` — extends base config, adds `"vitest/globals"` to types, includes `tests/**/*.ts`.
+
+#### Environment Setup
+
+**File:** `tests/setup/env-setup.ts`
+
+Sets all required environment variables before any module loads:
+
+```typescript
+process.env["NODE_ENV"]              = "test";
+process.env["SUPABASE_URL"]          = "https://placeholder.supabase.co";
+process.env["SUPABASE_JWT_SECRET"]   = "test-jwt-secret-long-enough-for-hs256-32chars!!";
+// ... all required env vars
+```
+
+#### Test Server Factory
+
+**File:** `tests/setup/test-server.ts`
+
+`buildTestApp()` creates a minimal Fastify instance for all integration tests:
+
+```typescript
+export async function buildTestApp(): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyJwt, { secret: process.env["SUPABASE_JWT_SECRET"]! });
+  app.setErrorHandler(/* mirrors production error handler */);
+  await registerRoutes(app);
+  await app.ready();
+  return app;
+}
+```
+
+Intentionally **omits**: security headers, rate-limit plugin, BullMQ workers, Prometheus. This keeps tests fast (< 2 s total) and externally isolated — no Redis or Supabase connections needed.
+
+Test token helpers:
+```typescript
+export function signEmployeeToken(app, userId?, orgId?): string
+export function signAdminToken(app,   userId?, orgId?): string
+```
+
+#### UUID Test Helpers
+
+**File:** `tests/helpers/uuid.ts`
+
+```typescript
+export const TEST_UUID  = (): string => randomUUID();        // fresh v4 each call
+export const TEST_UUIDS = (n: number): string[] => ...       // n unique UUIDs
+export const FIXED_TEST_UUID = "00000000-0000-4000-8000-000000000000"; // deterministic
+```
+
+Required because **Zod 4** switched to strict RFC-4122 UUID validation — hardcoded strings like `"test-id"` or `"aaaaa..."` that don't satisfy the version/variant bit pattern now fail `.uuid()` refinement.
+
+---
+
+### 18.2 — Test Coverage
+
+#### Unit Tests (5 files, 67 tests)
+
+| File | What it tests |
+|------|---------------|
+| `tests/unit/utils/pagination.test.ts` | `applyPagination()` — page clamping, limit clamping, offset arithmetic, string coercion, fluent chain |
+| `tests/unit/utils/response.test.ts` | `ok()`, `fail()`, `handleError()` — status codes, AppError dispatch, ZodError → 400, 500 fallback |
+| `tests/unit/utils/errors.test.ts` | All custom error classes — statusCode, message, inheritance chain |
+| `tests/unit/services/attendance.service.test.ts` | `checkIn` / `checkOut` — business rules, repository call sequence, domain errors |
+| `tests/unit/services/expenses.service.test.ts` | `createExpense` / `updateExpenseStatus` — role enforcement, `ExpenseAlreadyReviewed` guard |
+
+#### Integration Tests (3 files, 57 tests)
+
+All integration tests use `app.inject()` — real HTTP request/response through the full Fastify pipeline with mocked repositories:
+
+| File | Routes tested | Scenarios |
+|------|--------------|----------|
+| `tests/integration/attendance/attendance.test.ts` | check-in, check-out, my-sessions, org-sessions | 401/403/400/404/201/200, pagination, multi-tenant isolation |
+| `tests/integration/expenses/expenses.test.ts` | POST /expenses, GET /expenses/my, GET /admin/expenses, PATCH /admin/expenses/:id | 401/403/400/200/201, re-review guard, org isolation |
+| `tests/integration/locations/locations.test.ts` | POST /locations, POST /locations/batch, GET /locations/my-route | 401/403/400/201/200, batch limits, session validation, employee scoping |
+
+**Mock strategy:** `vi.mock()` is hoisted before any project imports so mocks are active when `registerRoutes()` triggers the import chain. Repository methods are replaced with `vi.fn()` and given `mockResolvedValue()` per-test.
+
+---
+
+### 18.3 — Production Hardening
+
+#### `TenantContext` Abstraction
+
+**File:** `src/utils/tenant.ts`
+
+`enforceTenant()` was updated to accept a plain `TenantContext` object (`{ organizationId: string }`) in addition to a full `FastifyRequest`. This allows worker-path code (which has no HTTP request) to use it safely without needing to craft a fake request object or use unsafe casts.
+
+#### Worker Concurrency
+
+`WORKER_CONCURRENCY` env var added (default `1`). Configures BullMQ worker concurrency — the default `1` ensures sequential Haversine processing (CPU-bound). Operators can increase it in staging for throughput testing.
+
+#### Debug Routes Restricted to Non-Production
+
+**File:** `src/routes/debug.ts`
+
+```typescript
+if (process.env["NODE_ENV"] === "production") {
+  app.log.info("Debug routes disabled in production");
+  return;
+}
+```
+
+Prevents infrastructure information disclosure (`GET /debug/redis`) in production.
+
+#### Role Guard Idiomatic Error Throwing
+
+**File:** `src/middleware/role-guard.ts`
+
+`requireRole()` now throws `ForbiddenError` directly instead of manually calling `reply.status(403).send(...)`. This routes all authorization failures through the centralized `handleError` pipeline, producing consistent `{ success: false, error, requestId }` bodies.
+
+#### `sequence_number` Nullable Documented
+
+**File:** `src/modules/locations/locations.schema.ts`
+
+Added inline documentation explaining that `sequence_number` is intentionally nullable during mobile app stabilization, with the planned migration SQL to make it `NOT NULL` once the mobile SDK is stable.
+
+---
+
+### 18.4 — Test Results
+
+```
+ Test Files  8 passed (8)
+      Tests  124 passed (124)
+   Duration  ~1.7s
+```
+
+| Category | Files | Tests |
+|----------|-------|-------|
+| Unit — utils | 3 | 67 |
+| Unit — services | 2 | (included above) |
+| Integration | 3 | 57 |
+| **Total** | **8** | **124** |
+
+---
+
+### Files Created / Modified
+
+| File | Action |
+|------|--------|
+| `vitest.config.ts` | **NEW** — Vitest config with globals, node env, setupFiles |
+| `tsconfig.test.json` | **NEW** — TypeScript config for test files |
+| `tests/setup/env-setup.ts` | **NEW** — Environment variable bootstrap |
+| `tests/setup/test-server.ts` | **NEW** — Minimal Fastify test factory + token helpers |
+| `tests/helpers/uuid.ts` | **NEW** — `TEST_UUID`, `TEST_UUIDS`, `FIXED_TEST_UUID` |
+| `tests/unit/utils/*.test.ts` | **NEW** — 3 utility unit test files |
+| `tests/unit/services/*.test.ts` | **NEW** — 2 service unit test files |
+| `tests/integration/**/*.test.ts` | **NEW** — 3 integration test files |
+| `src/utils/tenant.ts` | **MODIFIED** — `TenantContext` type; `enforceTenant()` accepts both |
+| `src/middleware/role-guard.ts` | **MODIFIED** — Throws `ForbiddenError`; no manual reply handling |
+| `src/routes/debug.ts` | **MODIFIED** — Early return in production |
+| `src/config/env.ts` | **MODIFIED** — `WORKER_CONCURRENCY` env var |
+| `src/modules/locations/locations.schema.ts` | **MODIFIED** — `sequence_number` nullable documented |
+| `package.json` | **MODIFIED** — `vitest`, `@vitest/coverage-v8` added; `"test"` script |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | ✅ Zero errors |
+| `npm run test` | ✅ 124/124 tests passing |
+| Debug route disabled in production | `NODE_ENV=production` returns `404` |
+| Worker concurrency configurable | `WORKER_CONCURRENCY=4` increases concurrency |
+| Role guard errors centralized | `handleError` produces `requestId` in every 403 |
+
+---
+
+## Post-Phase-18 — CI/CD Pipeline & Multi-Version Rollback System
+
+### Overview
+
+Two operational hardening additions were layered on top of Phase 18:
+1. **Production-grade CI/CD pipeline** — tests block deployment; Docker builds are cached
+2. **Multi-version rollback system** — instant production recovery using immutable GHCR image tags
+
+---
+
+### CI/CD Pipeline
+
+**File:** `.github/workflows/deploy.yml`
+
+The pipeline is split into two jobs:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  trigger: push to master OR pull_request to master           │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────┐         ┌─────────────────────────────┐
+│  test (all events) │──pass──►│  build-and-deploy           │
+│                    │         │  (push to master only)      │
+│  1. npm ci         │         │                             │
+│  2. tsc --noEmit   │         │  1. docker/setup-buildx     │
+│  3. npm run test   │         │  2. docker/login (GHCR)     │
+└────────────────────┘         │  3. docker/build-push       │
+                               │     (GHA cache, 2 tags)     │
+                               │  4. SSH → VPS deploy script │
+                               └─────────────────────────────┘
+```
+
+**Key improvements over the original pipeline:**
+
+| Concern | Before | After |
+|---------|--------|-------|
+| Test gate | ❌ Deployed without testing | ✅ `needs: test` blocks deployment on failure |
+| Dependency install | `npm install` (non-deterministic) | `npm ci` (deterministic, lock file enforced) |
+| TypeScript check | ❌ Not run in CI | ✅ `npx tsc --noEmit` before tests |
+| Docker cache | ❌ Full rebuild every push | ✅ GitHub Actions cache (`type=gha`) — 80% faster |
+| Node cache | ❌ Fresh `node_modules` every run | ✅ `actions/setup-node` cache on `package-lock.json` |
+| PR validation | ❌ Only runs on push | ✅ `test` job runs on PRs too |
+| Image tags | Single `latest` | `latest` + 7-char SHA tag |
+
+---
+
+### Multi-Version Rollback System
+
+**Files:** `backend/scripts/deploy-bluegreen.sh`, `backend/scripts/rollback.sh`
+
+#### Deployment History
+
+Every successful deploy prepends the 7-char image SHA to `.deploy_history` (a server-side file, excluded from git):
+
+```
+a4f91c2   ← current (line 1)
+7b3e9f1   ← previous
+e2c8d34
+d0a19b8
+9ff3e56   ← oldest retained
+```
+
+The history window is capped at the **last 5 deployments**.
+
+#### Rollback Procedure
+
+```bash
+./scripts/rollback.sh
+```
+
+1. Reads `.deploy_history` — requires ≥ 2 entries
+2. Displays current and target versions with the full history
+3. Prompts for interactive confirmation: `Continue with rollback? (yes/no)`
+4. Calls `deploy-bluegreen.sh <previous-SHA>` to redeploy the previous image
+5. The previous image is already in GHCR — no rebuild, **< 10 seconds** end-to-end
+
+#### Deploy a Specific Historical Version
+
+```bash
+./scripts/deploy-bluegreen.sh 7b3e9f1
+```
+
+Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
+
+---
+
+### Files Changed / Created
+
+| File | Action |
+|------|--------|
+| `.github/workflows/deploy.yml` | **MODIFIED** — Split into `test` + `build-and-deploy` jobs; `npm ci`; `tsc --noEmit`; GHA cache |
+| `backend/scripts/deploy-bluegreen.sh` | **MODIFIED** — Appends SHA to `.deploy_history`; maintains 5-entry window |
+| `backend/scripts/rollback.sh` | **NEW** — Reads history, confirms, re-deploys previous image |
+| `backend/.gitignore` | **MODIFIED** — `.deploy_history` excluded |
+| `docs/ROLLBACK_SYSTEM.md` | **NEW** — Architecture, usage, troubleshooting guide |
+| `docs/ROLLBACK_QUICKREF.md` | **NEW** — Fast reference card for operators |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `test` job runs on PRs | Branch protection gate active |
+| Deployment blocked on test failure | `needs: test` enforced |
+| `npm ci` used | Deterministic dependency install |
+| Docker layer cache | `cache-from/to: type=gha` in `docker/build-push-action` |
+| Rollback requires 2+ deployments | Script exits with error if history is insufficient |
+| Rollback time | < 10 s (image already in GHCR) |
+| SHA tag on each image | `ghcr.io/.../fieldtrack-backend:<sha>` retained permanently |

@@ -282,7 +282,7 @@ describe("Attendance Integration Tests", () => {
         headers: { authorization: `Bearer ${tokenOrgA}` },
       });
       const callA = vi.mocked(attendanceRepository.findSessionsByUser).mock
-        .calls[0]![0] as { organizationId: string };
+        .calls[0]![0] as unknown as { organizationId: string };
 
       await app.inject({
         method: "GET",
@@ -290,7 +290,7 @@ describe("Attendance Integration Tests", () => {
         headers: { authorization: `Bearer ${tokenOrgB}` },
       });
       const callB = vi.mocked(attendanceRepository.findSessionsByUser).mock
-        .calls[1]![0] as { organizationId: string };
+        .calls[1]![0] as unknown as { organizationId: string };
 
       expect(callA.organizationId).toBe(TEST_ORG_ID);
       expect(callB.organizationId).toBe(TEST_ORG_ID_B);

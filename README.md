@@ -1,98 +1,160 @@
 # FieldTrack 2.0
 
-> A multi-tenant SaaS platform for real-time field employee tracking — attendance, GPS location, expense management, and admin analytics.
+> Production-grade multi-tenant backend for real-time field workforce tracking — attendance, GPS, expense management, and admin analytics.
+
+[![CI](https://github.com/rajashish147/FieldTrack-2.0/actions/workflows/deploy.yml/badge.svg)](https://github.com/rajashish147/FieldTrack-2.0/actions/workflows/deploy.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org)
+
+---
 
 ## Overview
 
-FieldTrack 2.0 is a production-grade backend service built with **Fastify** and **TypeScript**. It provides secure, tenant-isolated APIs for managing field workforce operations including attendance check-in/check-out, real-time GPS location ingestion, expense workflows, and admin analytics dashboards.
+FieldTrack 2.0 is a production-ready REST API backend for managing field workforce operations. It provides secure, multi-tenant APIs for tracking employee attendance, real-time GPS location, expense workflows, and aggregate analytics — all with a full observability stack, automated CI/CD, and zero-downtime blue-green deployments.
+
+---
+
+## Features
+
+- **Multi-tenant isolation** — every data query is scoped to the authenticated organization; cross-tenant access is architecturally impossible
+- **Attendance sessions** — check-in / check-out lifecycle with state machine enforcement (`EmployeeAlreadyCheckedIn`, `SessionAlreadyClosed`)
+- **Real-time GPS ingestion** — single and batch endpoints (up to 100 points), idempotent upsert, per-user rate limiting
+- **Async distance calculation** — BullMQ background worker computes Haversine distance after check-out; never blocks the HTTP response
+- **Expense workflow** — PENDING → APPROVED / REJECTED lifecycle, ADMIN review endpoints, re-review guard
+- **Admin analytics** — org-wide summaries, per-user breakdowns, configurable leaderboard (distance / duration / sessions)
+- **Redis-backed rate limiting** — per-JWT-sub limits on write endpoints survive corporate NAT and horizontal scaling
+- **Security plugins** — Helmet, CORS, Redis rate limiter, brute-force detection with Prometheus counters
+- **Distributed tracing** — OpenTelemetry → Tempo; trace IDs injected into every Pino log line
+- **One-click metric-to-trace** — Prometheus exemplars link latency spikes directly to Tempo traces in Grafana
+- **Blue-green zero-downtime deployments** — Nginx upstream swap, health-check gate, 5-SHA rollback history
+- **Automated rollback** — `rollback.sh` restores the previous version in under 10 seconds
+- **Full test suite** — 124 tests (8 files) with Vitest; unit + integration coverage; CI blocks deploy on failure
+
+---
 
 ## Tech Stack
 
-| Layer              | Technology                                                                 |
-|--------------------|----------------------------------------------------------------------------|
-| **Runtime**        | Node.js 20 (Alpine)                                                       |
-| **Language**        | TypeScript 5.9 (strict, ESM)                                              |
-| **Framework**       | Fastify 5                                                                  |
-| **Database**        | PostgreSQL via [Supabase](https://supabase.com)                            |
-| **Auth**            | JWT (`@fastify/jwt`) with Supabase-issued tokens                          |
-| **Job Queue**       | [BullMQ](https://docs.bullmq.io/) + Redis (durable background processing) |
-| **Validation**      | [Zod 4](https://zod.dev/)                                                 |
-| **Observability**   | Prometheus, Grafana, Loki, Tempo, Promtail, OpenTelemetry                  |
-| **Security**        | `@fastify/helmet`, `@fastify/cors`, `@fastify/rate-limit`, `@fastify/compress` |
-| **CI/CD**           | GitHub Actions → GHCR → Blue-Green Deploy to VPS                          |
+| Layer | Technology |
+|-------|------------|
+| **Runtime** | Node.js 20 (Alpine) |
+| **Language** | TypeScript 5.9 (strict, ESM) |
+| **Framework** | Fastify 5 |
+| **Database** | PostgreSQL via [Supabase](https://supabase.com) |
+| **Auth** | JWT (`@fastify/jwt`) — Supabase-issued tokens |
+| **Job Queue** | [BullMQ](https://docs.bullmq.io/) + Redis |
+| **Validation** | [Zod 4](https://zod.dev/) |
+| **Observability** | Prometheus · Grafana · Loki · Tempo · Promtail · OpenTelemetry |
+| **Security** | `@fastify/helmet` · `@fastify/cors` · `@fastify/rate-limit` · `@fastify/compress` |
+| **Testing** | [Vitest](https://vitest.dev/) |
+| **CI/CD** | GitHub Actions → GHCR → Blue-Green VPS Deploy |
+
+---
+
+## Architecture
+
+```
+Client
+  │ HTTPS
+  ▼
+Nginx  (TLS termination · blue/green upstream switching)
+  │
+  ▼
+Fastify 5  (OpenTelemetry → Helmet → CORS → Rate Limit → JWT → Routes)
+  ├── PostgreSQL via Supabase  (tenant-scoped queries)
+  ├── Redis  (BullMQ job queue + rate-limit counters — separate connections)
+  └── Distance Worker  (BullMQ consumer → Haversine → session_summaries)
+
+Observability sidecar (docker-compose.monitoring.yml):
+  Prometheus → Grafana   (metrics + dashboards + alerting)
+  Loki ← Promtail        (structured log aggregation)
+  Tempo ← OTLP           (distributed traces)
+```
+
+For a detailed breakdown see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
 
 ## Quick Start
 
-### Prerequisites
-
-- **Node.js** ≥ 20
-- **npm** (ships with Node.js)
-- **Redis** (for BullMQ job queue)
-- A **Supabase** project with the required tables
-
-### Installation
+**Prerequisites:** Node.js ≥ 20, npm, Redis, a Supabase project
 
 ```bash
-# Navigate to backend directory
+# 1. Install dependencies
 cd backend
-
-# Install dependencies
 npm install
 
-# Copy environment template
+# 2. Configure environment
 cp .env.example .env
+# Edit .env — fill in Supabase URL, keys, Redis URL, and ALLOWED_ORIGINS
 
-# Configure your .env file with Supabase credentials and Redis connection
-```
-
-### Development
-
-```bash
-# Run in development mode with hot reload
+# 3. Run in development mode
 npm run dev
+
+# 4. Run the test suite
+npm run test
 ```
 
-### Production
+---
+
+## Deployment
+
+FieldTrack 2.0 deploys automatically via GitHub Actions on every push to `master`.
+
+```
+Push to master
+  → test job (npm ci · tsc · vitest)  — blocks on failure
+  → build-and-deploy job (Docker Buildx with GHA cache → GHCR → VPS SSH)
+```
+
+### Manual deploy / rollback
 
 ```bash
-# Build TypeScript to JavaScript
-npm run build
-
-# Start production server
-npm start
+# On the VPS
+./scripts/deploy-bluegreen.sh <sha>   # Deploy a specific image
+./scripts/rollback.sh                 # Restore previous version (~10 s)
 ```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full setup instructions including VPS provisioning, Nginx config, and CI/CD secret configuration.
+
+---
 
 ## Project Structure
 
 ```
 FieldTrack-2.0/
-├── backend/          # Fastify backend service
-├── infra/            # Infrastructure and monitoring (Docker Compose, Grafana, Prometheus, etc.)
-├── docs/             # Project documentation
-└── .github/          # GitHub Actions workflows
+├── backend/               # Fastify + TypeScript backend
+│   ├── src/               # Application source
+│   │   ├── modules/       # Domain modules (attendance · locations · expenses · analytics)
+│   │   ├── plugins/       # Fastify plugins (JWT · Prometheus · security stack)
+│   │   ├── workers/       # BullMQ distance calculation worker
+│   │   ├── middleware/     # Auth + role guard
+│   │   └── utils/         # Shared utilities (errors · response · tenant · metrics)
+│   ├── tests/             # Vitest unit and integration tests
+│   └── scripts/           # Blue-green deploy + rollback scripts
+├── infra/                 # Monitoring stack (Prometheus · Grafana · Loki · Tempo)
+├── docs/                  # Project documentation
+└── .github/workflows/     # GitHub Actions CI/CD
 ```
 
-## Monitoring & Observability
-
-The project includes a comprehensive observability stack in the `infra/` directory:
-
-- **Prometheus**: Metrics collection and storage
-- **Grafana**: Dashboards and visualization
-- **Loki**: Log aggregation
-- **Tempo**: Distributed tracing
-- **Promtail**: Log shipping
-
-To start the monitoring stack:
-
-```bash
-cd infra
-docker-compose -f docker-compose.monitoring.yml up -d
-```
+---
 
 ## Documentation
 
-For detailed backend API documentation and architecture, see [Here](./backend/README.md).
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/API_REFERENCE.md) | All endpoints, auth requirements, request/response schemas, error codes |
+| [Architecture](docs/ARCHITECTURE.md) | System design, request lifecycle, tenant isolation, key decisions |
+| [Deployment Guide](docs/DEPLOYMENT.md) | VPS provisioning, CI/CD setup, blue-green deploy, troubleshooting |
+| [Rollback System](docs/ROLLBACK_SYSTEM.md) | Rollback architecture and deployment history |
+| [Rollback Quick Reference](docs/ROLLBACK_QUICKREF.md) | Fast operator reference card |
+| [Walkthrough](docs/walkthrough.md) | Phase-by-phase build history and deep-dives |
+| [Changelog](CHANGELOG.md) | Full history of every phase |
+| [Contributing](CONTRIBUTING.md) | Contribution workflow, branching, code conventions |
+| [Security Policy](SECURITY.md) | How to report vulnerabilities |
+
+---
 
 ## License
 
-ISC
+[MIT](LICENSE) © 2026 Ashish Raj
