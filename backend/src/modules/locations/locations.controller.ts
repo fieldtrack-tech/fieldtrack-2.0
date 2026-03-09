@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { locationsService } from "./locations.service.js";
 import { createLocationSchema, createLocationBatchSchema, sessionQuerySchema } from "./locations.schema.js";
-import { AppError } from "../../utils/errors.js";
+import { ok, handleError } from "../../utils/response.js";
 
 /**
  * Location controller — extracts request data, validates, calls service, returns response.
@@ -11,18 +11,9 @@ export const locationsController = {
         try {
             const parsedBody = createLocationSchema.parse(request.body);
             const record = await locationsService.recordLocation(request, parsedBody);
-            reply.status(201).send({ success: true, data: record });
+            reply.status(201).send(ok(record));
         } catch (error) {
-            if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-                return;
-            }
-            if (error instanceof Error && error.name === "ZodError") {
-                reply.status(400).send({ success: false, error: JSON.parse(error.message), requestId: request.id });
-                return;
-            }
-            request.log.error(error, "Unexpected error ingesting location");
-            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+            handleError(error, request, reply, "Unexpected error ingesting location");
         }
     },
 
@@ -32,16 +23,7 @@ export const locationsController = {
             const inserted = await locationsService.recordLocationBatch(request, parsedBody);
             reply.status(201).send({ success: true, inserted });
         } catch (error) {
-            if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-                return;
-            }
-            if (error instanceof Error && error.name === "ZodError") {
-                reply.status(400).send({ success: false, error: JSON.parse(error.message), requestId: request.id });
-                return;
-            }
-            request.log.error(error, "Unexpected error ingesting location batch");
-            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+            handleError(error, request, reply, "Unexpected error ingesting location batch");
         }
     },
 
@@ -49,18 +31,9 @@ export const locationsController = {
         try {
             const parsedQuery = sessionQuerySchema.parse(request.query);
             const route = await locationsService.getRoute(request, parsedQuery.sessionId);
-            reply.status(200).send({ success: true, data: route });
+            reply.status(200).send(ok(route));
         } catch (error) {
-            if (error instanceof AppError) {
-                reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-                return;
-            }
-            if (error instanceof Error && error.name === "ZodError") {
-                reply.status(400).send({ success: false, error: JSON.parse(error.message), requestId: request.id });
-                return;
-            }
-            request.log.error(error, "Unexpected error fetching location route");
-            reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+            handleError(error, request, reply, "Unexpected error fetching location route");
         }
     },
 };

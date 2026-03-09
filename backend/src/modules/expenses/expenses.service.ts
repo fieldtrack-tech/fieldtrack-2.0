@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { expensesRepository } from "./expenses.repository.js";
-import { BadRequestError, NotFoundError } from "../../utils/errors.js";
+import { NotFoundError, ExpenseAlreadyReviewed } from "../../utils/errors.js";
 import type {
   Expense,
   CreateExpenseBody,
@@ -97,9 +97,7 @@ export const expensesService = {
 
     // 2. Only PENDING expenses may be transitioned.
     if (expense.status !== "PENDING") {
-      throw new BadRequestError(
-        `Expense has already been ${expense.status.toLowerCase()}. Only PENDING expenses can be actioned.`,
-      );
+      throw new ExpenseAlreadyReviewed(expense.status);
     }
 
     // 3. Apply the new status, recording the reviewer identity.

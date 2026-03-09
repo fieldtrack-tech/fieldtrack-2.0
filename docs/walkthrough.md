@@ -1473,3 +1473,218 @@ http_request_duration_seconds_count{method="POST",route="/attendance/check-out",
 | Timer storage | `WeakMap<IncomingMessage>` — no type casting, no memory leaks |
 | Route cardinality | `routeOptions.url` (pattern) not `request.url` (full path) |
 | Self-scrape excluded | `/metrics` route skipped in `onResponse` hook |
+
+---
+
+## Phase 16 — Schema Rebuild with ENUM Types
+
+### Overview
+
+Phase 16 performed a clean database reset, replacing all `TEXT` columns that carried constrained values with native PostgreSQL `ENUM` types. TypeScript types were re-generated from the new schema to keep the type system in sync.
+
+### What Changed
+
+| Area | Before | After |
+|------|--------|-------|
+| `role` on `employees` | `TEXT` | `ENUM user_role ('ADMIN','EMPLOYEE')` |
+| `status` on `expenses` | `TEXT` | `ENUM expense_status ('PENDING','APPROVED','REJECTED')` |
+| `distance_recalculation_status` on `attendance_sessions` | `TEXT` | `ENUM distance_job_status ('pending','processing','done','failed')` |
+| TypeScript types | Manually maintained | Auto-generated via `supabase gen types typescript --linked` |
+
+### Files Created / Modified
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `supabase/migrations/20260309000000_phase16_schema.sql` | **NEW** | Full schema DDL with ENUM types, all 7 tables, indexes, RLS policies |
+| `backend/src/types/database.ts` | **REGENERATED** | Supabase-generated TypeScript types (removed from `.gitignore` so Docker can build) |
+| `backend/src/types/db.ts` | **NEW** | Human-readable type aliases — `AttendanceSession`, `Expense`, `GpsLocation`, etc. |
+| Attendance / expenses / locations / analytics schema files | **UPDATED** | Import row types from `db.ts` instead of long `Database["public"]["Tables"][...]["Row"]` paths |
+
+### Migration Steps
+
+```
+supabase db reset --linked --yes
+supabase gen types typescript --linked > backend/src/types/database.ts
+```
+
+---
+
+## Phase 17 — API & Service Layer Hardening
+
+### Overview
+
+Phase 17 hardened the entire API surface without adding new endpoints. The goals were:
+
+1. **Uniform response shape** — every endpoint returns the same `{ success, data }` / `{ success, error, requestId }` envelope, built by shared helpers
+2. **Domain-specific errors** — business rule violations produce typed, descriptive messages instead of generic `BadRequestError`
+3. **Reusable pagination** — a single `applyPagination()` replaces four copies of identical offset arithmetic
+4. **Employee-scoped location routes** — employees can only read their own GPS tracks, not any session in the org
+5. **Type safety in route config** — eliminated `any` cast in rate-limit `keyGenerator`
+
+### Files Created
+
+#### `src/utils/response.ts`
+
+Provides three exports used by every controller:
+
+```ts
+// Type aliases
+type SuccessResponse<T> = { success: true; data: T }
+type ErrorResponse     = { success: false; error: string; requestId: string }
+type ApiResponse<T>    = SuccessResponse<T> | ErrorResponse
+
+// Builders
+function ok<T>(data: T): SuccessResponse<T>
+function fail(error: string, requestId: string): ErrorResponse
+
+// Unified catch handler
+function handleError(error: unknown, request, reply, context: string): void
+```
+
+`handleError` dispatch priority:
+
+```
+AppError subclass  →  error.statusCode (400 / 401 / 403 / 404)
+ZodError           →  400, issues joined with "; "
+anything else      →  500, logged with request.log.error(error, context)
+```
+
+Before this file existed, every controller had 4-line catch blocks duplicating the same `AppError` instanceof check and manual `500` send. Now every catch block is a single line.
+
+#### `src/utils/pagination.ts`
+
+```ts
+const PAGINATION_DEFAULTS = { LIMIT: 50, MAX_LIMIT: 100 }
+
+function applyPagination<T extends Rangeable>(query: T, page: number, limit: number): T
+// clamps page ≥ 1, limit ∈ [1, 100]
+// calls .range(offset, offset + safeLimit - 1) on the Supabase query builder
+```
+
+Four list queries across three repositories previously duplicated:
+```ts
+const offset = (page - 1) * limit;
+query.range(offset, offset + limit - 1)
+```
+All four now delegate to `applyPagination()`.
+
+### Files Modified
+
+#### `src/utils/errors.ts` — Domain Error Classes
+
+Three domain-specific error subclasses added after `ForbiddenError`:
+
+| Class | HTTP | Message |
+|-------|------|---------|
+| `EmployeeAlreadyCheckedIn` | 400 | "Cannot check in: you already have an active session. Check out first." |
+| `SessionAlreadyClosed` | 400 | "Cannot check out: no active session found. Check in first." |
+| `ExpenseAlreadyReviewed` | 400 | "Expense has already been {status}. Only PENDING expenses can be actioned." |
+
+All extend `BadRequestError` → `AppError`, so `handleError` picks them up automatically.
+
+#### `src/modules/attendance/attendance.repository.ts`
+
+- Added `findEmployeeInOrg(request, employeeId): Promise<boolean>` — queries `employees` table with org scope + `is_active = true`; returns `true` if found
+- `findSessionsByUser` and `findSessionsByOrg` now use `applyPagination()` instead of inline offset arithmetic
+
+#### `src/modules/attendance/attendance.service.ts`
+
+`checkIn` now enforces two rules in order:
+
+```
+1. findEmployeeInOrg()  →  NotFoundError if employee doesn't belong to org
+2. findOpenSession()    →  EmployeeAlreadyCheckedIn if session already open
+```
+
+`checkOut` throws `SessionAlreadyClosed` instead of a generic `BadRequestError`.
+
+#### `src/modules/expenses/expenses.repository.ts`
+
+`findExpensesByUser` and `findExpensesByOrg` use `applyPagination()`.
+
+#### `src/modules/expenses/expenses.service.ts`
+
+`updateExpenseStatus` throws `ExpenseAlreadyReviewed(expense.status)` when the expense is not `PENDING`.
+
+#### `src/modules/locations/locations.repository.ts`
+
+- `findLocationsBySession` accepts an optional `employeeId?: string`; when present, adds `.eq("employee_id", employeeId)` before `enforceTenant`
+- `findPointsForDistancePaginated` uses `applyPagination()`
+
+#### `src/modules/locations/locations.service.ts`
+
+`getRoute` now passes `request.user.sub` as the `employeeId` argument to `findLocationsBySession`, ensuring employees can only retrieve GPS tracks that belong to their own employee record — not any session in the organization.
+
+#### `src/modules/locations/locations.routes.ts`
+
+Rate-limit `keyGenerator` fixed:
+
+| Issue | Fix |
+|-------|-----|
+| `req: any` | Changed to `req: FastifyRequest`; `FastifyInstance` import updated to `FastifyInstance, FastifyRequest` |
+| Potential crash on malformed JWT | Added `if (!base64Url) return req.ip;` null guard |
+| Untyped payload | Cast as `{ sub?: string }` |
+| `payload.sub \|\| req.ip` | Changed to `payload.sub ?? req.ip` (null-coalescing) |
+
+#### All 5 Controllers
+
+Every controller replaced its manual `{ success: true, data }` / `{ success: false, error, requestId }` inline construction with `ok()` / `fail()` / `handleError()`.
+
+Before (per handler, ~8 lines):
+```ts
+try {
+  const result = await service.method(request);
+  reply.status(200).send({ success: true, data: result });
+} catch (error) {
+  if (error instanceof AppError) {
+    reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
+    return;
+  }
+  request.log.error(error, "context");
+  reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+}
+```
+
+After (per handler, 4 lines):
+```ts
+try {
+  const result = await service.method(request);
+  reply.status(200).send(ok(result));
+} catch (error) {
+  handleError(error, request, reply, "context");
+}
+```
+
+### How It All Connects
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Controller
+    participant Service
+    participant Repository
+    participant DB as Supabase
+
+    Client->>Controller: HTTP Request
+    Controller->>Controller: Zod schema parse (safeParse or parse)
+    alt Validation fails
+        Controller-->>Client: 400 fail("Validation failed: ...", requestId)
+    end
+    Controller->>Service: business method(request, args)
+    Service->>Repository: findEmployeeInOrg / findOpenSession / etc.
+    Repository->>DB: enforceTenant() + applyPagination()
+    alt Domain rule violated
+        Service-->>Controller: throws EmployeeAlreadyCheckedIn | SessionAlreadyClosed | ExpenseAlreadyReviewed
+        Controller-->>Client: 400 fail(domainError.message, requestId)
+    end
+    Service-->>Controller: typed result
+    Controller-->>Client: 201/200 ok(result)
+```
+
+### Verification
+
+```
+npx tsc --noEmit
+```
+
+Result: **0 errors** across all 3 utility files, 3 repositories, 2 services, 5 controllers, and 1 route file.

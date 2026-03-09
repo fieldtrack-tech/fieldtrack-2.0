@@ -5,7 +5,7 @@ import {
   updateExpenseStatusBodySchema,
   expensePaginationSchema,
 } from "./expenses.schema.js";
-import { AppError } from "../../utils/errors.js";
+import { ok, fail, handleError } from "../../utils/response.js";
 
 /**
  * Expenses controller — parses/validates request data, delegates to service,
@@ -20,22 +20,15 @@ export const expensesController = {
     try {
       const parsed = createExpenseBodySchema.safeParse(request.body);
       if (!parsed.success) {
-        const issues = parsed.error.issues
-          .map((i) => i.message)
-          .join("; ");
-        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
+        const issues = parsed.error.issues.map((i) => i.message).join("; ");
+        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
         return;
       }
 
       const expense = await expensesService.createExpense(request, parsed.data);
-      reply.status(201).send({ success: true, data: expense });
+      reply.status(201).send(ok(expense));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error creating expense");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error creating expense");
     }
   },
 
@@ -51,14 +44,9 @@ export const expensesController = {
         parsed.page,
         parsed.limit,
       );
-      reply.status(200).send({ success: true, data: expenses });
+      reply.status(200).send(ok(expenses));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error fetching user expenses");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error fetching user expenses");
     }
   },
 
@@ -77,14 +65,9 @@ export const expensesController = {
         parsed.page,
         parsed.limit,
       );
-      reply.status(200).send({ success: true, data: expenses });
+      reply.status(200).send(ok(expenses));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error fetching org expenses");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error fetching org expenses");
     }
   },
 
@@ -101,10 +84,8 @@ export const expensesController = {
 
       const parsed = updateExpenseStatusBodySchema.safeParse(request.body);
       if (!parsed.success) {
-        const issues = parsed.error.issues
-          .map((i) => i.message)
-          .join("; ");
-        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
+        const issues = parsed.error.issues.map((i) => i.message).join("; ");
+        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
         return;
       }
 
@@ -113,14 +94,9 @@ export const expensesController = {
         id,
         parsed.data,
       );
-      reply.status(200).send({ success: true, data: expense });
+      reply.status(200).send(ok(expense));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error updating expense status");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error updating expense status");
     }
   },
 };

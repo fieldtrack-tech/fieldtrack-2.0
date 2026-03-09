@@ -5,7 +5,7 @@ import {
   userSummaryQuerySchema,
   topPerformersQuerySchema,
 } from "./analytics.schema.js";
-import { AppError } from "../../utils/errors.js";
+import { ok, fail, handleError } from "../../utils/response.js";
 
 /**
  * Analytics controller — validates query params via Zod, delegates to service,
@@ -27,7 +27,7 @@ export const analyticsController = {
       const parsed = orgSummaryQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
+        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
         return;
       }
 
@@ -37,14 +37,9 @@ export const analyticsController = {
         parsed.data.to,
       );
 
-      reply.status(200).send({ success: true, data });
+      reply.status(200).send(ok(data));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error in getOrgSummary");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error in getOrgSummary");
     }
   },
 
@@ -60,7 +55,7 @@ export const analyticsController = {
       const parsed = userSummaryQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
+        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
         return;
       }
 
@@ -71,14 +66,9 @@ export const analyticsController = {
         parsed.data.to,
       );
 
-      reply.status(200).send({ success: true, data });
+      reply.status(200).send(ok(data));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error in getUserSummary");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error in getUserSummary");
     }
   },
 
@@ -94,7 +84,7 @@ export const analyticsController = {
       const parsed = topPerformersQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        reply.status(400).send({ success: false, error: `Validation failed: ${issues}`, requestId: request.id });
+        reply.status(400).send(fail(`Validation failed: ${issues}`, request.id));
         return;
       }
 
@@ -106,14 +96,9 @@ export const analyticsController = {
         parsed.data.limit,
       );
 
-      reply.status(200).send({ success: true, data });
+      reply.status(200).send(ok(data));
     } catch (error) {
-      if (error instanceof AppError) {
-        reply.status(error.statusCode).send({ success: false, error: error.message, requestId: request.id });
-        return;
-      }
-      request.log.error(error, "Unexpected error in getTopPerformers");
-      reply.status(500).send({ success: false, error: "Internal server error", requestId: request.id });
+      handleError(error, request, reply, "Unexpected error in getTopPerformers");
     }
   },
 };

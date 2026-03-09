@@ -134,6 +134,6 @@ export const locationsService = {
     // We will assume findLocationsBySession is safe enough for Phase 3, but ideally location
     // repo would also filter by user_id for employees.)
 
-    return locationsRepository.findLocationsBySession(request, sessionId);
+    return locationsRepository.findLocationsBySession(request, sessionId, request.user.sub);
   },
 };

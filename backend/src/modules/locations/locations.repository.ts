@@ -1,5 +1,6 @@
 import { supabaseAnonClient as supabase } from "../../config/supabase.js";
 import { enforceTenant } from "../../utils/tenant.js";
+import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
 
@@ -74,12 +75,17 @@ export const locationsRepository = {
     async findLocationsBySession(
         request: FastifyRequest,
         sessionId: string,
+        employeeId?: string,
     ): Promise<LocationRecord[]> {
-        const baseQuery = supabase
+        let baseQuery = supabase
             .from("gps_locations")
             .select("id, organization_id, session_id, employee_id, latitude, longitude, accuracy, recorded_at, sequence_number, is_duplicate")
             .eq("session_id", sessionId)
             .order("recorded_at", { ascending: true });
+
+        if (employeeId !== undefined) {
+            baseQuery = baseQuery.eq("employee_id", employeeId) as typeof baseQuery;
+        }
 
         const { data, error } = await enforceTenant(request, baseQuery);
 
@@ -95,17 +101,16 @@ export const locationsRepository = {
         page: number,
         limit: number,
     ): Promise<{ latitude: number; longitude: number; recorded_at: string }[]> {
-        const offset = (page - 1) * limit;
-
         const baseQuery = supabase
             .from("gps_locations")
             .select("latitude, longitude, recorded_at")
             .eq("session_id", sessionId)
             .order("recorded_at", { ascending: true });
 
-        const { data, error } = await enforceTenant(request, baseQuery).range(
-            offset,
-            offset + limit - 1,
+        const { data, error } = await applyPagination(
+            enforceTenant(request, baseQuery),
+            page,
+            limit,
         );
 
         if (error) {

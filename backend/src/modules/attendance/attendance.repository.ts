@@ -3,6 +3,7 @@ import {
   supabaseServiceClient,
 } from "../../config/supabase.js";
 import { enforceTenant } from "../../utils/tenant.js";
+import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
 
@@ -73,6 +74,30 @@ export const attendanceRepository = {
   },
 
   /**
+   * Check whether an active employee exists within the requesting organization.
+   * Used by the service layer to provide a clear error before hitting DB constraints.
+   */
+  async findEmployeeInOrg(
+    request: FastifyRequest,
+    employeeId: string,
+  ): Promise<boolean> {
+    const baseQuery = supabase
+      .from("employees")
+      .select("id")
+      .eq("id", employeeId)
+      .eq("is_active", true);
+
+    const { data, error } = await enforceTenant(request, baseQuery)
+      .limit(1)
+      .maybeSingle();
+
+    if (error && error.code !== "PGRST116") {
+      throw new Error(`Failed to validate employee: ${error.message}`);
+    }
+    return data !== null;
+  },
+
+  /**
    * Create a new check-in session.
    * Insert doesn't need enforceTenant() — we explicitly set organization_id.
    */
@@ -131,17 +156,16 @@ export const attendanceRepository = {
     page: number,
     limit: number,
   ): Promise<AttendanceSession[]> {
-    const offset = (page - 1) * limit;
-
     const baseQuery = supabase
       .from("attendance_sessions")
       .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .eq("employee_id", employeeId)
       .order("checkin_at", { ascending: false });
 
-    const { data, error } = await enforceTenant(request, baseQuery).range(
-      offset,
-      offset + limit - 1,
+    const { data, error } = await applyPagination(
+      enforceTenant(request, baseQuery),
+      page,
+      limit,
     );
 
     if (error) {
@@ -158,16 +182,15 @@ export const attendanceRepository = {
     page: number,
     limit: number,
   ): Promise<AttendanceSession[]> {
-    const offset = (page - 1) * limit;
-
     const baseQuery = supabase
       .from("attendance_sessions")
       .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
       .order("checkin_at", { ascending: false });
 
-    const { data, error } = await enforceTenant(request, baseQuery).range(
-      offset,
-      offset + limit - 1,
+    const { data, error } = await applyPagination(
+      enforceTenant(request, baseQuery),
+      page,
+      limit,
     );
 
     if (error) {

@@ -36,3 +36,30 @@ export class ForbiddenError extends AppError {
         this.name = "ForbiddenError";
     }
 }
+
+// ─── Domain-specific errors ───────────────────────────────────────────────────
+
+export class EmployeeAlreadyCheckedIn extends BadRequestError {
+    constructor() {
+        super(
+            "Cannot check in: you already have an active session. Check out first.",
+        );
+        this.name = "EmployeeAlreadyCheckedIn";
+    }
+}
+
+export class SessionAlreadyClosed extends BadRequestError {
+    constructor() {
+        super("Cannot check out: no active session found. Check in first.");
+        this.name = "SessionAlreadyClosed";
+    }
+}
+
+export class ExpenseAlreadyReviewed extends BadRequestError {
+    constructor(currentStatus: string) {
+        super(
+            `Expense has already been ${currentStatus.toLowerCase()}. Only PENDING expenses can be actioned.`,
+        );
+        this.name = "ExpenseAlreadyReviewed";
+    }
+}

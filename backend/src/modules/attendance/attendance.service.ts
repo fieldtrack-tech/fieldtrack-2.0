@@ -1,7 +1,11 @@
 import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
 import { enqueueDistanceJob } from "../../workers/distance.queue.js";
-import { BadRequestError } from "../../utils/errors.js";
+import {
+  NotFoundError,
+  EmployeeAlreadyCheckedIn,
+  SessionAlreadyClosed,
+} from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
 
 /**
@@ -15,14 +19,24 @@ export const attendanceService = {
   async checkIn(request: FastifyRequest): Promise<AttendanceSession> {
     const userId = request.user.sub;
 
+    // 1. Verify employee exists and belongs to this organization.
+    const employeeExists = await attendanceRepository.findEmployeeInOrg(
+      request,
+      userId,
+    );
+    if (!employeeExists) {
+      throw new NotFoundError(
+        "Employee not found in this organization.",
+      );
+    }
+
+    // 2. Prevent duplicate active sessions.
     const openSession = await attendanceRepository.findOpenSession(
       request,
       userId,
     );
     if (openSession) {
-      throw new BadRequestError(
-        "Cannot check in: you already have an active session. Check out first.",
-      );
+      throw new EmployeeAlreadyCheckedIn();
     }
 
     request.log.info(
@@ -44,9 +58,7 @@ export const attendanceService = {
       userId,
     );
     if (!openSession) {
-      throw new BadRequestError(
-        "Cannot check out: no active session found. Check in first.",
-      );
+      throw new SessionAlreadyClosed();
     }
 
     request.log.info(
