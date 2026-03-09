@@ -17,4 +17,3 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
-backend/src/types/database.ts
