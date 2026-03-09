@@ -53,25 +53,46 @@ FieldTrack 2.0 is a production-ready REST API backend for managing field workfor
 
 ## Architecture
 
-```
-Client
-  │ HTTPS
-  ▼
-Nginx  (TLS termination · blue/green upstream switching)
-  │
-  ▼
-Fastify 5  (OpenTelemetry → Helmet → CORS → Rate Limit → JWT → Routes)
-  ├── PostgreSQL via Supabase  (tenant-scoped queries)
-  ├── Redis  (BullMQ job queue + rate-limit counters — separate connections)
-  └── Distance Worker  (BullMQ consumer → Haversine → session_summaries)
+### System Overview
 
-Observability sidecar (docker-compose.monitoring.yml):
-  Prometheus → Grafana   (metrics + dashboards + alerting)
-  Loki ← Promtail        (structured log aggregation)
-  Tempo ← OTLP           (distributed traces)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        CLIENT LAYER                             │
+│  Mobile App  →  Web Dashboard  →  Desktop Client                │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ HTTPS / REST API
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    APPLICATION LAYER                            │
+│                                                                  │
+│  Nginx (TLS · Blue-Green Routing)                               │
+│    │                                                             │
+│    ▼                                                             │
+│  Fastify 5 API Server                                           │
+│    ├─ Auth Middleware (JWT)                                     │
+│    ├─ Security (Helmet · CORS · Rate Limit)                     │
+│    ├─ Validation (Zod)                                          │
+│    └─ Business Logic                                            │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                ┌────────────┼────────────┐
+                │            │            │
+                ▼            ▼            ▼
+┌──────────────────┐  ┌──────────────┐  ┌──────────────────┐
+│   Supabase       │  │    Redis     │  │  BullMQ Worker   │
+│   PostgreSQL     │  │  Job Queue   │  │  (Distance Calc) │
+│  (Multi-tenant)  │  │              │  │                  │
+└──────────────────┘  └──────────────┘  └──────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                   OBSERVABILITY LAYER                           │
+│                                                                  │
+│  Prometheus → Grafana ← Loki ← Tempo                            │
+│   (Metrics)   (Dashboards) (Logs) (Traces)                      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-For a detailed breakdown see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**📊 For detailed architecture diagrams, data flows, and deployment topology see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
 ---
 
@@ -143,11 +164,11 @@ FieldTrack-2.0/
 
 | Document | Description |
 |----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System design, component diagrams, data flows, deployment topology, security layers |
 | [API Reference](docs/API_REFERENCE.md) | All endpoints, auth requirements, request/response schemas, error codes |
-| [Architecture](docs/ARCHITECTURE.md) | System design, request lifecycle, tenant isolation, key decisions |
 | [Deployment Guide](docs/DEPLOYMENT.md) | VPS provisioning, CI/CD setup, blue-green deploy, troubleshooting |
-| [Rollback System](docs/ROLLBACK_SYSTEM.md) | Rollback architecture and deployment history |
-| [Rollback Quick Reference](docs/ROLLBACK_QUICKREF.md) | Fast operator reference card |
+| [Rollback System](backend/docs/ROLLBACK_SYSTEM.md) | Rollback architecture, deployment history, safety features |
+| [Rollback Quick Reference](backend/docs/ROLLBACK_QUICKREF.md) | Fast operator reference card for deployments |
 | [Walkthrough](docs/walkthrough.md) | Phase-by-phase build history and deep-dives |
 | [Changelog](CHANGELOG.md) | Full history of every phase |
 | [Contributing](CONTRIBUTING.md) | Contribution workflow, branching, code conventions |
