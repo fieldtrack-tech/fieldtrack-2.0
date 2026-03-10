@@ -1,6 +1,9 @@
 import jwksClient from "jwks-rsa";
-import { verify, type JwtPayload as JoseJwtPayload } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
+import type { JwtPayload as JoseJwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
+
+const { verify } = jwt;
 
 /**
  * JWKS client for fetching Supabase signing keys.
