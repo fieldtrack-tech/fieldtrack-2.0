@@ -60,7 +60,11 @@ export async function authenticate(
                 organizationId = decoded.organization_id;
                 // Test tokens embed employee_id directly to avoid a DB call in tests.
                 // signEmployeeToken includes it; ADMIN tokens omit it → undefined.
-                request.employeeId = decoded.employee_id ?? undefined;
+                // Use process.env directly (not the validated env object) so this
+                // shortcut is provably unreachable outside a test process.
+                if (process.env.NODE_ENV === "test") {
+                    request.employeeId = decoded.employee_id ?? undefined;
+                }
             } catch (error) {
                 throw new UnauthorizedError("Invalid or expired token");
             }
