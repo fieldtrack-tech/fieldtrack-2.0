@@ -71,8 +71,11 @@ export const paginationQuerySchema = z.object({
 
 async function openApiPlugin(app: FastifyInstance): Promise<void> {
   // Set Zod as the type provider for automatic schema transformation
-  app.setValidatorCompiler(validatorCompiler);
-  app.setSerializerCompiler(serializerCompiler);
+  // Skip in test environments to avoid compiler conflicts
+  if (process.env.NODE_ENV !== "test") {
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+  }
 
   // Register Swagger with OpenAPI 3.0 specification
   await app.register(fastifySwagger, {

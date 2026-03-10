@@ -35,7 +35,7 @@ export async function authenticate(
     try {
         // Step 1: Extract token from Authorization header
         const authHeader = request.headers.authorization;
-        
+
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
             throw new UnauthorizedError("Missing or malformed Authorization header");
         }
@@ -58,27 +58,30 @@ export async function authenticate(
                 role = decoded.role; // Test tokens have role at top level
                 email = decoded.email;
                 organizationId = decoded.organization_id;
+                // Test tokens embed employee_id directly to avoid a DB call in tests.
+                // signEmployeeToken includes it; ADMIN tokens omit it → undefined.
+                request.employeeId = decoded.employee_id ?? undefined;
             } catch (error) {
                 throw new UnauthorizedError("Invalid or expired token");
             }
         } else {
             // Production mode: use Supabase JWKS verification (Layer 1)
             const decoded = await verifySupabaseToken(token);
-            
+
             userId = decoded.sub;
             email = decoded.email;
-            
+
             // Improvement 2: Validate UUID format for sub
             // Protects against malformed tokens with invalid user IDs
             if (!uuidValidate(userId)) {
                 request.log.warn({ sub: userId }, "Invalid user ID format in token");
                 throw new UnauthorizedError("Invalid user id in token");
             }
-            
+
             // Improvement 1: Fail fast if user_metadata.role is missing
             // Never default roles - failing fast is safer than privilege mistakes
             role = decoded.user_metadata?.role;
-            
+
             if (!role) {
                 request.log.warn({ sub: decoded.sub }, "User role missing in token metadata");
                 throw new UnauthorizedError("User role missing in token metadata");
@@ -98,6 +101,20 @@ export async function authenticate(
             }
 
             organizationId = userData.organization_id;
+
+            // Step 3b: Resolve employees.id for this user (once, upfront).
+            // EMPLOYEE routes need employees.id (employees.id ≠ users.id).
+            // ADMIN users may not have an employees row — undefined is expected.
+            const { data: employeeData } = await supabaseServiceClient
+                .from("employees")
+                .select("id")
+                .eq("user_id", decoded.sub)
+                .eq("organization_id", organizationId)
+                .eq("is_active", true)
+                .limit(1)
+                .maybeSingle();
+
+            request.employeeId = employeeData?.id ?? undefined;
         }
 
         // Step 4: Validate complete user context with Zod
@@ -134,10 +151,10 @@ export async function authenticate(
         }
     } catch (error) {
         // Never log the raw token for security reasons
-        const err = error instanceof UnauthorizedError 
-            ? error 
+        const err = error instanceof UnauthorizedError
+            ? error
             : new UnauthorizedError("Invalid or missing authentication token");
-        
+
         reply.status(err.statusCode).send({ error: err.message });
     }
 }

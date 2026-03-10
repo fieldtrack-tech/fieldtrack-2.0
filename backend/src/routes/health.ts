@@ -7,11 +7,7 @@ interface HealthResponse {
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
     app.get<{ Reply: HealthResponse }>("/health", {
-        schema: {
-            tags: ["health"],
-            summary: "Health check",
-            description: "Returns server health status and current timestamp",
-        },
+        schema: { tags: ["health"] },
     }, async (_request, _reply) => {
         return {
             status: "ok",

@@ -15,22 +15,14 @@ import { expensesController } from "./expenses.controller.js";
  *   PATCH /admin/expenses/:id — approve or reject a PENDING expense
  */
 export async function expensesRoutes(app: FastifyInstance): Promise<void> {
-  // ─── EMPLOYEE: Create expense ───────────────────────────────────────────────
-  // Rate-limited per JWT sub to prevent abuse. A legitimate employee has no
-  // reason to submit more than 10 expense claims per minute.
   app.post(
     "/expenses",
     {
-      schema: {
-        tags: ["expenses"],
-        summary: "Create expense",
-        description: "Submits a new expense claim for the authenticated employee",
-        security: [{ BearerAuth: [] }],
-      },
+      schema: { tags: ["expenses"] },
       config: {
         rateLimit: {
           max: 10,
-          timeWindow: 60_000, // 10 requests per 60 seconds per user
+          timeWindow: 60_000,
           keyGenerator: (req: FastifyRequest): string => {
             const auth = req.headers.authorization;
             if (auth && auth.startsWith("Bearer ")) {
@@ -60,41 +52,29 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
     expensesController.create,
   );
 
-  // ─── EMPLOYEE: List own expenses ────────────────────────────────────────────
   app.get(
     "/expenses/my",
-    {      schema: {
-        tags: ["expenses"],
-        summary: "Get my expenses",
-        description: "Retrieves paginated list of the authenticated user's expense claims",
-        security: [{ BearerAuth: [] }],
-      },      preHandler: [authenticate, requireRole("EMPLOYEE")],
+    {
+      schema: { tags: ["expenses"] },
+      preHandler: [authenticate, requireRole("EMPLOYEE")],
     },
     expensesController.getMy,
   );
 
-  // ─── ADMIN: List all org expenses ───────────────────────────────────────────
   app.get(
     "/admin/expenses",
-    {      schema: {
-        tags: ["admin", "expenses"],
-        summary: "Get all organization expenses",
-        description: "Retrieves paginated list of all expense claims in the organization (ADMIN only)",
-        security: [{ BearerAuth: [] }],
-      },      preHandler: [authenticate, requireRole("ADMIN")],
+    {
+      schema: { tags: ["admin"] },
+      preHandler: [authenticate, requireRole("ADMIN")],
     },
     expensesController.getOrgAll,
   );
 
-  // ─── ADMIN: Approve or reject a single expense ──────────────────────────────
   app.patch<{ Params: { id: string } }>(
     "/admin/expenses/:id",
-    {      schema: {
-        tags: ["admin", "expenses"],
-        summary: "Approve or reject expense",
-        description: "Updates the status of a pending expense claim to approved or rejected (ADMIN only)",
-        security: [{ BearerAuth: [] }],
-      },      preHandler: [authenticate, requireRole("ADMIN")],
+    {
+      schema: { tags: ["admin"] },
+      preHandler: [authenticate, requireRole("ADMIN")],
     },
     expensesController.updateStatus,
   );

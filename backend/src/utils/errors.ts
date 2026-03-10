@@ -63,3 +63,25 @@ export class ExpenseAlreadyReviewed extends BadRequestError {
         this.name = "ExpenseAlreadyReviewed";
     }
 }
+
+// ─── Request context guards ───────────────────────────────────────────────────
+
+import type { FastifyRequest } from "fastify";
+
+/**
+ * Asserts that the request carries a resolved employee identity.
+ * Throws ForbiddenError (403) if not — which happens when an ADMIN token
+ * (no employees row) hits an employee-only endpoint.
+ *
+ * Also acts as a type narrowing assertion: after this call,
+ * `request.employeeId` is guaranteed to be `string`, not `string | undefined`.
+ */
+export function requireEmployeeContext(
+    request: FastifyRequest,
+): asserts request is FastifyRequest & { employeeId: string } {
+    if (!request.employeeId) {
+        throw new ForbiddenError(
+            "Employee context required. This endpoint is for employees only.",
+        );
+    }
+}

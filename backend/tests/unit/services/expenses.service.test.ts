@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { FastifyRequest } from "fastify";
 import {
   ExpenseAlreadyReviewed,
+  ForbiddenError,
   NotFoundError,
 } from "../../../src/utils/errors.js";
 
@@ -17,6 +18,8 @@ vi.mock("../../../src/modules/expenses/expenses.repository.js", () => ({
   },
 }));
 
+// No attendanceRepository mock needed — expenses.service.ts no longer imports it.
+
 import { expensesService } from "../../../src/modules/expenses/expenses.service.js";
 import { expensesRepository } from "../../../src/modules/expenses/expenses.repository.js";
 
@@ -27,10 +30,14 @@ const EMPLOYEE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const ORG_ID = "11111111-1111-1111-1111-111111111111";
 const EXPENSE_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 
-function makeFakeRequest(role: "ADMIN" | "EMPLOYEE" = "ADMIN"): FastifyRequest {
+function makeFakeRequest(
+  role: "ADMIN" | "EMPLOYEE" = "ADMIN",
+  employeeId?: string,
+): FastifyRequest {
   return {
-    user: { sub: ADMIN_ID, role, organization_id: ORG_ID },
+    user: { sub: role === "ADMIN" ? ADMIN_ID : EMPLOYEE_ID, role, organization_id: ORG_ID },
     organizationId: ORG_ID,
+    employeeId,
     id: "test-req-id",
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   } as unknown as FastifyRequest;
@@ -168,7 +175,8 @@ describe("expensesService.createExpense()", () => {
     vi.mocked(expensesRepository.createExpense).mockResolvedValue(
       pendingExpense as never,
     );
-    const request = makeFakeRequest("EMPLOYEE");
+    // Pass employeeId on the request (normally set by auth middleware)
+    const request = makeFakeRequest("EMPLOYEE", EMPLOYEE_ID);
     const result = await expensesService.createExpense(request, {
       amount: 50,
       description: "Team lunch",
@@ -176,14 +184,11 @@ describe("expensesService.createExpense()", () => {
     expect(result).toEqual(pendingExpense);
   });
 
-  it("calls createExpense with the authenticated employee id", async () => {
+  it("calls createExpense with the authenticated employee id from request", async () => {
     vi.mocked(expensesRepository.createExpense).mockResolvedValue(
       pendingExpense as never,
     );
-    const request = {
-      ...makeFakeRequest("EMPLOYEE"),
-      user: { sub: EMPLOYEE_ID, role: "EMPLOYEE", organization_id: ORG_ID },
-    } as unknown as FastifyRequest;
+    const request = makeFakeRequest("EMPLOYEE", EMPLOYEE_ID);
     await expensesService.createExpense(request, {
       amount: 50,
       description: "Team lunch",
@@ -193,5 +198,12 @@ describe("expensesService.createExpense()", () => {
       EMPLOYEE_ID,
       expect.objectContaining({ amount: 50, description: "Team lunch" }),
     );
+  });
+
+  it("throws ForbiddenError when request.employeeId is undefined", async () => {
+    const request = makeFakeRequest("EMPLOYEE", undefined);
+    await expect(
+      expensesService.createExpense(request, { amount: 50, description: "Test" }),
+    ).rejects.toThrow(ForbiddenError);
   });
 });

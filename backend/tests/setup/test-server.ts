@@ -70,7 +70,9 @@ export function signEmployeeToken(
   userId = TEST_EMPLOYEE_ID,
   orgId = TEST_ORG_ID,
 ): string {
-  return app.jwt.sign({ sub: userId, role: "EMPLOYEE", organization_id: orgId });
+  // Embed employee_id so auth middleware can set request.employeeId without a DB call.
+  // In tests, employee_id == userId for simplicity (same UUID, no actual DB mapping).
+  return app.jwt.sign({ sub: userId, role: "EMPLOYEE", organization_id: orgId, employee_id: userId });
 }
 
 export function signAdminToken(

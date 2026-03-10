@@ -10,64 +10,29 @@ import { analyticsController } from "./analytics.controller.js";
  * No analytics data is ever exposed to non-admin identities.
  */
 export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
-  const adminGuard = {
-    schema: {
-      tags: ["admin", "analytics"],
-      security: [{ BearerAuth: [] }],
-    },
-    preHandler: [authenticate, requireRole("ADMIN")],
-  };
-
-  /**
-   * GET /admin/org-summary
-   * Organisation-wide totals: sessions, distance, duration, expenses, active users.
-   * Query params: from (ISO-8601, optional), to (ISO-8601, optional)
-   */
   app.get(
     "/admin/org-summary",
     {
-      ...adminGuard,
-      schema: {
-        ...adminGuard.schema,
-        summary: "Get organization summary",
-        description: "Retrieves organization-wide totals and statistics (ADMIN only)",
-      },
+      schema: { tags: ["admin"] },
+      preHandler: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getOrgSummary,
   );
 
-  /**
-   * GET /admin/user-summary
-   * Per-user totals and averages within an optional date range.
-   * Query params: userId (UUID, required), from (optional), to (optional)
-   */
   app.get(
     "/admin/user-summary",
     {
-      ...adminGuard,
-      schema: {
-        ...adminGuard.schema,
-        summary: "Get user summary",
-        description: "Retrieves per-user totals and averages within a date range (ADMIN only)",
-      },
+      schema: { tags: ["admin"] },
+      preHandler: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getUserSummary,
   );
 
-  /**
-   * GET /admin/top-performers
-   * Ranked leaderboard by distance, duration, or session count.
-   * Query params: metric (required), from (optional), to (optional), limit (1-50, default 10)
-   */
   app.get(
     "/admin/top-performers",
     {
-      ...adminGuard,
-      schema: {
-        ...adminGuard.schema,
-        summary: "Get top performers",
-        description: "Retrieves ranked leaderboard by distance, duration, or session count (ADMIN only)",
-      },
+      schema: { tags: ["admin"] },
+      preHandler: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getTopPerformers,
   );

@@ -1,7 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { expensesRepository } from "./expenses.repository.js";
-import { attendanceRepository } from "../attendance/attendance.repository.js";
-import { NotFoundError, ExpenseAlreadyReviewed } from "../../utils/errors.js";
+import { ExpenseAlreadyReviewed, NotFoundError, requireEmployeeContext } from "../../utils/errors.js";
 import type {
   Expense,
   CreateExpenseBody,
@@ -10,6 +9,9 @@ import type {
 
 /**
  * Expenses service — business rules for expense management.
+ *
+ * Phase: employeeId resolved once in auth middleware (request.employeeId).
+ * The attendanceRepository import has been removed.
  *
  * EMPLOYEE rules:
  *  - Can create an expense (status always starts as PENDING).
@@ -30,14 +32,8 @@ export const expensesService = {
     request: FastifyRequest,
     body: CreateExpenseBody,
   ): Promise<Expense> {
-    const userId = request.user.sub;
-
-    // Resolve users.id → employees.id before inserting into expenses.employee_id.
-    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
-      request,
-      userId,
-    );
-    if (!employeeId) throw new NotFoundError("Employee profile not found.");
+    requireEmployeeContext(request);
+    const employeeId = request.employeeId;
 
     const expense = await expensesRepository.createExpense(
       request,
@@ -49,7 +45,7 @@ export const expensesService = {
       {
         event: "expense_created",
         expenseId: expense.id,
-        userId,
+        userId: request.user.sub,
         employeeId,
         organizationId: request.organizationId,
         amount: expense.amount,
@@ -68,13 +64,7 @@ export const expensesService = {
     page: number,
     limit: number,
   ): Promise<Expense[]> {
-    const userId = request.user.sub;
-
-    // Resolve users.id → employees.id before filtering by expenses.employee_id.
-    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
-      request,
-      userId,
-    );
+    const employeeId = request.employeeId;
     if (!employeeId) return [];
 
     return expensesRepository.findExpensesByUser(request, employeeId, page, limit);

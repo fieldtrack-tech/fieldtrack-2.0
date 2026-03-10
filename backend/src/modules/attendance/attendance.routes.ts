@@ -13,12 +13,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-in",
     {
-      schema: {
-        tags: ["attendance"],
-        summary: "Check in to start attendance session",
-        description: "Creates a new attendance session for the authenticated user",
-        security: [{ BearerAuth: [] }],
-      },
+      schema: { tags: ["attendance"] },
       preHandler: [authenticate],
     },
     attendanceController.checkIn,
@@ -28,12 +23,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-out",
     {
-      schema: {
-        tags: ["attendance"],
-        summary: "Check out to end attendance session",
-        description: "Closes the active attendance session for the authenticated user",
-        security: [{ BearerAuth: [] }],
-      },
+      schema: { tags: ["attendance"] },
       preHandler: [authenticate],
     },
     attendanceController.checkOut,
@@ -41,28 +31,15 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
 
   // Recalculate distance and duration explicitly.
   // Rate-limited per user (JWT sub) to prevent recalculation flooding.
-  // A legitimate client has no reason to trigger more than a handful of
-  // recalculations per minute for the same session — this cap is generous
-  // while still blocking adversarial or runaway retry loops.
   app.post<{ Params: { sessionId: string } }>(
     "/attendance/:sessionId/recalculate",
     {
-      schema: {
-        tags: ["attendance"],
-        summary: "Recalculate session distance and duration",
-        description: "Manually triggers recalculation of distance and duration for a specific session",
-        security: [{ BearerAuth: [] }],
-      },
+      schema: { tags: ["attendance"] },
       config: {
         rateLimit: {
           max: 5,
-          timeWindow: 60_000, // 5 requests per 60 seconds per user
+          timeWindow: 60_000,
           keyGenerator: (req: FastifyRequest): string => {
-            // Use the JWT sub (user ID) as the rate-limit key so the
-            // limit is per-identity, not per-IP. Fall back to IP only
-            // if the token cannot be decoded (should not happen in practice
-            // because authenticate runs before the handler, but we guard
-            // defensively here since keyGenerator runs in onRequest phase).
             const auth = req.headers.authorization;
             if (auth && auth.startsWith("Bearer ")) {
               try {
@@ -93,12 +70,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/attendance/my-sessions",
     {
-      schema: {
-        tags: ["attendance"],
-        summary: "Get my attendance sessions",
-        description: "Retrieves paginated list of the authenticated user's attendance sessions",
-        security: [{ BearerAuth: [] }],
-      },
+      schema: { tags: ["attendance"] },
       preHandler: [authenticate],
     },
     attendanceController.getMySessions,
@@ -108,12 +80,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/attendance/org-sessions",
     {
-      schema: {
-        tags: ["admin", "attendance"],
-        summary: "Get all organization attendance sessions",
-        description: "Retrieves paginated list of all attendance sessions in the organization (ADMIN only)",
-        security: [{ BearerAuth: [] }],
-      },
+      schema: { tags: ["admin"] },
       preHandler: [authenticate, requireRole("ADMIN")],
     },
     attendanceController.getOrgSessions,
