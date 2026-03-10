@@ -92,7 +92,14 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
         }
       });
     },
-    { connection: redisConnectionOptions, concurrency: env.WORKER_CONCURRENCY },
+    {
+      connection: redisConnectionOptions,
+      concurrency: env.WORKER_CONCURRENCY,
+      // Limit the number of completed/failed job records retained in Redis to
+      // prevent unbounded memory growth over time.
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 5000 },
+    },
   );
 
   worker.on("error", (err: Error) => {

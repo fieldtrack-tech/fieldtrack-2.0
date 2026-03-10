@@ -2,6 +2,11 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { expensesController } from "./expenses.controller.js";
+import {
+  createExpenseBodySchema,
+  expensePaginationSchema,
+  updateExpenseStatusBodySchema,
+} from "./expenses.schema.js";
 
 /**
  * Expense routes.
@@ -18,7 +23,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/expenses",
     {
-      schema: { tags: ["expenses"] },
+      schema: { tags: ["expenses"], body: createExpenseBodySchema },
       config: {
         rateLimit: {
           max: 10,
@@ -47,7 +52,9 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
           },
         },
       },
-      preHandler: [authenticate, requireRole("EMPLOYEE")],
+      // preValidation runs before body parsing+validation, so auth/role checks
+      // always return 401/403 even when the body is invalid.
+      preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     expensesController.create,
   );
@@ -55,8 +62,9 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/expenses/my",
     {
-      schema: { tags: ["expenses"] },
-      preHandler: [authenticate, requireRole("EMPLOYEE")],
+      schema: { tags: ["expenses"], querystring: expensePaginationSchema },
+      // preValidation ensures 401/403 fires before querystring validation
+      preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     expensesController.getMy,
   );
@@ -64,8 +72,8 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin/expenses",
     {
-      schema: { tags: ["admin"] },
-      preHandler: [authenticate, requireRole("ADMIN")],
+      schema: { tags: ["admin"], querystring: expensePaginationSchema },
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     expensesController.getOrgAll,
   );
@@ -73,8 +81,9 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string } }>(
     "/admin/expenses/:id",
     {
-      schema: { tags: ["admin"] },
-      preHandler: [authenticate, requireRole("ADMIN")],
+      schema: { tags: ["admin"], body: updateExpenseStatusBodySchema },
+      // preValidation ensures auth/role fires before body validation
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     expensesController.updateStatus,
   );

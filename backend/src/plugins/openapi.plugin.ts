@@ -2,11 +2,7 @@ import type { FastifyInstance } from "fastify";
 import fastifyPlugin from "fastify-plugin";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUI from "@fastify/swagger-ui";
-import {
-  jsonSchemaTransform,
-  serializerCompiler,
-  validatorCompiler,
-} from "fastify-type-provider-zod";
+import { jsonSchemaTransform } from "fastify-type-provider-zod";
 import { z } from "zod";
 
 /**
@@ -70,13 +66,6 @@ export const paginationQuerySchema = z.object({
 // ─── OpenAPI Plugin ───────────────────────────────────────────────────────────
 
 async function openApiPlugin(app: FastifyInstance): Promise<void> {
-  // Set Zod as the type provider for automatic schema transformation
-  // Skip in test environments to avoid compiler conflicts
-  if (process.env.NODE_ENV !== "test") {
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-  }
-
   // Register Swagger with OpenAPI 3.0 specification
   await app.register(fastifySwagger, {
     openapi: {

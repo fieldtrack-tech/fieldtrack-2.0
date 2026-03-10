@@ -16,6 +16,7 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import fastifyJwt from "@fastify/jwt";
+import { registerZod } from "../../src/plugins/zod.plugin.js";
 import { registerRoutes } from "../../src/routes/index.js";
 import { AppError } from "../../src/utils/errors.js";
 
@@ -35,6 +36,10 @@ export const TEST_SESSION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 export async function buildTestApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
+  // Zod type provider — must be set before route registration so Fastify
+  // can compile Zod schemas placed in route schema.querystring / schema.body.
+  registerZod(app);
+
   // JWT — must match the secret used when signing test tokens
   await app.register(fastifyJwt, {
     secret: process.env["SUPABASE_JWT_SECRET"] ?? "test-secret",
@@ -45,6 +50,18 @@ export async function buildTestApp(): Promise<FastifyInstance> {
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {
       void reply.status(error.statusCode).send({
+        success: false,
+        error: error.message,
+        requestId: request.id,
+      });
+      return;
+    }
+    // Pass through Fastify built-in errors (validation, rate-limit, etc.) that
+    // carry their own HTTP status code so clients receive 400/422/429 instead
+    // of a generic 500.
+    const builtinStatus = (error as { statusCode?: number }).statusCode;
+    if (builtinStatus !== undefined && builtinStatus >= 400 && builtinStatus < 500) {
+      void reply.status(builtinStatus).send({
         success: false,
         error: error.message,
         requestId: request.id,

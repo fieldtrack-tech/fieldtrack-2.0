@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
+import { paginationSchema } from "./attendance.schema.js";
 
 /**
  * Attendance routes — all endpoints require authentication.
@@ -70,8 +71,9 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/attendance/my-sessions",
     {
-      schema: { tags: ["attendance"] },
-      preHandler: [authenticate],
+      schema: { tags: ["attendance"], querystring: paginationSchema },
+      // preValidation ensures 401 fires before querystring validation
+      preValidation: [authenticate],
     },
     attendanceController.getMySessions,
   );
@@ -80,8 +82,9 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/attendance/org-sessions",
     {
-      schema: { tags: ["admin"] },
-      preHandler: [authenticate, requireRole("ADMIN")],
+      schema: { tags: ["admin"], querystring: paginationSchema },
+      // preValidation ensures 401/403 fires before querystring validation
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     attendanceController.getOrgSessions,
   );

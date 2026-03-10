@@ -2,6 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { analyticsController } from "./analytics.controller.js";
+import {
+  orgSummaryQuerySchema,
+  userSummaryQuerySchema,
+  topPerformersQuerySchema,
+} from "./analytics.schema.js";
 
 /**
  * Analytics routes — all endpoints require JWT authentication + ADMIN role.
@@ -13,8 +18,11 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin/org-summary",
     {
-      schema: { tags: ["admin"] },
-      preHandler: [authenticate, requireRole("ADMIN")],
+      schema: {
+        tags: ["admin"],
+        querystring: orgSummaryQuerySchema,
+      },
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getOrgSummary,
   );
@@ -24,17 +32,9 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
-        querystring: {
-          type: "object",
-          required: ["userId"],
-          properties: {
-            userId: { type: "string", format: "uuid" },
-            from: { type: "string", format: "date-time" },
-            to: { type: "string", format: "date-time" },
-          },
-        },
+        querystring: userSummaryQuerySchema,
       },
-      preHandler: [authenticate, requireRole("ADMIN")],
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getUserSummary,
   );
@@ -44,21 +44,9 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
-        querystring: {
-          type: "object",
-          required: ["metric"],
-          properties: {
-            metric: {
-              type: "string",
-              enum: ["distance", "duration", "sessions"],
-            },
-            from: { type: "string", format: "date-time" },
-            to: { type: "string", format: "date-time" },
-            limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
-          },
-        },
+        querystring: topPerformersQuerySchema,
       },
-      preHandler: [authenticate, requireRole("ADMIN")],
+      preValidation: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getTopPerformers,
   );

@@ -17,6 +17,7 @@ import rateLimitPlugin from "./plugins/security/ratelimit.plugin.js";
 import abuseLoggingPlugin from "./plugins/security/abuse-logging.plugin.js";
 // Phase 19: OpenAPI documentation
 import openApiPlugin from "./plugins/openapi.plugin.js";
+import { registerZod } from "./plugins/zod.plugin.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -33,6 +34,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ─── Phase 15: Security Plugin Stack ────────────────────────────────────────
   // Registered in order: helmet → cors → rate-limit → abuse-logging.
   // Each plugin is isolated in src/plugins/security/ for maintainability.
+
+  // Register Zod validator/serializer compilers before any routes or plugins
+  // that might add routes. This is the single place that enables Zod schema
+  // support — openapi.plugin.ts no longer duplicates this registration.
+  registerZod(app);
 
   await app.register(helmetPlugin);
   await app.register(corsPlugin);
@@ -86,6 +92,19 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setErrorHandler<Error>((error, request, reply) => {
     if (error instanceof AppError) {
       void reply.status(error.statusCode).send({
+        success: false,
+        error: error.message,
+        requestId: request.id,
+      });
+      return;
+    }
+
+    // Pass through Fastify built-in errors (validation, rate-limit, etc.) that
+    // carry their own HTTP status code so clients receive 400/422/429 instead
+    // of a generic 500.
+    const builtinStatus = (error as { statusCode?: number }).statusCode;
+    if (builtinStatus !== undefined && builtinStatus >= 400 && builtinStatus < 500) {
+      void reply.status(builtinStatus).send({
         success: false,
         error: error.message,
         requestId: request.id,
