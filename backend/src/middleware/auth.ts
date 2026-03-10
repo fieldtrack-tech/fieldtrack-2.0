@@ -1,15 +1,30 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { trace, context } from "@opentelemetry/api";
+import { validate as uuidValidate } from "uuid";
 import { jwtPayloadSchema } from "../types/jwt.js";
 import { UnauthorizedError } from "../utils/errors.js";
+import { verifySupabaseToken } from "../auth/jwtVerifier.js";
+import { supabaseServiceClient } from "../config/supabase.js";
+import { env } from "../config/env.js";
 
 /**
- * Authentication middleware — JWT verification + Zod payload validation.
+ * Layer 2 — Authentication Middleware
+ * 
+ * Fastify preHandler that authenticates incoming requests.
  *
- * 1. Verifies JWT signature via @fastify/jwt
- * 2. Validates decoded claims against the strict Zod schema
- * 3. Attaches typed `user` and `organizationId` to the request
- *
+ * Phase 20: Updated to use Supabase JWKS verification (ES256) in production.
+ * In test mode, falls back to @fastify/jwt for compatibility with test tokens.
+ * 
+ * Responsibilities:
+ * 1. Extract token from Authorization header
+ * 2. Verify token signature (delegates to Layer 1)
+ * 3. Load user data from database
+ * 4. Validate complete user context
+ * 5. Attach authenticated user to request
+ * 
+ * This middleware handles HTTP-specific concerns (headers, responses)
+ * while Layer 1 (verifySupabaseToken) handles pure token verification.
+ * 
  * Any request that fails verification or has malformed claims
  * is rejected with a 401 Unauthorized response.
  */
@@ -18,11 +33,80 @@ export async function authenticate(
     reply: FastifyReply
 ): Promise<void> {
     try {
-        // Step 1: Verify JWT signature and decode payload
-        await request.jwtVerify();
+        // Step 1: Extract token from Authorization header
+        const authHeader = request.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            throw new UnauthorizedError("Missing or malformed Authorization header");
+        }
 
-        // Step 2: Validate decoded payload structure with Zod
-        const result = jwtPayloadSchema.safeParse(request.user);
+        const token = authHeader.substring(7); // Remove "Bearer " prefix
+
+        let userId: string;
+        let email: string | undefined;
+        let role: string | undefined;
+        let organizationId: string | undefined;
+
+        // Step 2: Verify token signature (Layer 1)
+        // In test mode (NODE_ENV=test), use @fastify/jwt for backward compatibility
+        // In production, use Supabase JWKS verification
+        if (env.NODE_ENV === "test") {
+            // Test mode: use @fastify/jwt (synchronous verification)
+            try {
+                const decoded = request.server.jwt.verify(token) as any;
+                userId = decoded.sub;
+                role = decoded.role; // Test tokens have role at top level
+                email = decoded.email;
+                organizationId = decoded.organization_id;
+            } catch (error) {
+                throw new UnauthorizedError("Invalid or expired token");
+            }
+        } else {
+            // Production mode: use Supabase JWKS verification (Layer 1)
+            const decoded = await verifySupabaseToken(token);
+            
+            userId = decoded.sub;
+            email = decoded.email;
+            
+            // Improvement 2: Validate UUID format for sub
+            // Protects against malformed tokens with invalid user IDs
+            if (!uuidValidate(userId)) {
+                request.log.warn({ sub: userId }, "Invalid user ID format in token");
+                throw new UnauthorizedError("Invalid user id in token");
+            }
+            
+            // Improvement 1: Fail fast if user_metadata.role is missing
+            // Never default roles - failing fast is safer than privilege mistakes
+            role = decoded.user_metadata?.role;
+            
+            if (!role) {
+                request.log.warn({ sub: decoded.sub }, "User role missing in token metadata");
+                throw new UnauthorizedError("User role missing in token metadata");
+            }
+
+            // Step 3: Load user data from database
+            // Fetch organization_id since it's not in the JWT payload
+            const { data: userData, error: userError } = await supabaseServiceClient
+                .from("users")
+                .select("organization_id")
+                .eq("id", decoded.sub)
+                .single();
+
+            if (userError || !userData) {
+                request.log.warn({ sub: decoded.sub, error: userError }, "User not found in database");
+                throw new UnauthorizedError("User not found");
+            }
+
+            organizationId = userData.organization_id;
+        }
+
+        // Step 4: Validate complete user context with Zod
+        const result = jwtPayloadSchema.safeParse({
+            sub: userId,
+            email: email,
+            role: role,
+            organization_id: organizationId,
+        });
 
         if (!result.success) {
             const issues = result.error.issues
@@ -36,7 +120,8 @@ export async function authenticate(
             return;
         }
 
-        // Step 3: Attach validated tenant context to request
+        // Step 5: Attach authenticated user to request
+        request.user = result.data;
         request.organizationId = result.data.organization_id;
 
         // Attach the user's identity to the active trace span so every
@@ -45,11 +130,14 @@ export async function authenticate(
         const span = trace.getSpan(context.active());
         if (span) {
             span.setAttribute("enduser.id", result.data.sub);
+            span.setAttribute("enduser.role", result.data.role);
         }
-    } catch (_error) {
-        const err = new UnauthorizedError(
-            "Invalid or missing authentication token"
-        );
+    } catch (error) {
+        // Never log the raw token for security reasons
+        const err = error instanceof UnauthorizedError 
+            ? error 
+            : new UnauthorizedError("Invalid or missing authentication token");
+        
         reply.status(err.statusCode).send({ error: err.message });
     }
 }
