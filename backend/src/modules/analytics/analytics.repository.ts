@@ -42,7 +42,7 @@ export const analyticsRepository = {
   ): Promise<MinimalSessionRow[]> {
     let baseQuery = supabase
       .from("attendance_sessions")
-      .select("id, employee_id")
+      .select("id, employee_id, total_distance_km, total_duration_seconds")
       .order("checkin_at", { ascending: false });
 
     if (from !== undefined) {
@@ -71,7 +71,7 @@ export const analyticsRepository = {
   ): Promise<MinimalSessionRow[]> {
     let baseQuery = supabase
       .from("attendance_sessions")
-      .select("id, employee_id")
+      .select("id, employee_id, total_distance_km, total_duration_seconds")
       .eq("employee_id", employeeId)
       .order("checkin_at", { ascending: false });
 
@@ -181,6 +181,30 @@ export const analyticsRepository = {
       throw new Error(`Analytics: failed to fetch expenses: ${error.message}`);
     }
     return (data ?? []) as MinimalExpenseRow[];
+  },
+
+  /**
+   * Count all active employees in the requesting org.
+   *
+   * Uses a HEAD request (no row data returned) so Postgres only executes
+   * a COUNT — far cheaper than fetching rows and measuring .length.
+   *
+   * Relies on index: employees(organization_id)
+   */
+  async getActiveEmployeesCount(request: FastifyRequest): Promise<number> {
+    const baseQuery = supabase
+      .from("employees")
+      .select("id", { count: "exact", head: true })
+      .eq("is_active", true);
+
+    const result = await enforceTenant(request, baseQuery);
+
+    if (result.error) {
+      throw new Error(
+        `Analytics: failed to count active employees: ${result.error.message}`,
+      );
+    }
+    return result.count ?? 0;
   },
 
   /**

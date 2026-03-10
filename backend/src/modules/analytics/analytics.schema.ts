@@ -53,10 +53,11 @@ export type MinimalSummaryRow = Pick<SessionSummaryRow,
 
 /**
  * Minimal row shape fetched from attendance_sessions.
- * Used only to resolve session IDs for a given date range.
+ * Includes pre-computed distance and duration so the analytics service
+ * can aggregate directly without a second session_summaries lookup.
  */
 export type MinimalSessionRow = Pick<AttendanceSession,
-  "id" | "employee_id"
+  "id" | "employee_id" | "total_distance_km" | "total_duration_seconds"
 >;
 
 /**

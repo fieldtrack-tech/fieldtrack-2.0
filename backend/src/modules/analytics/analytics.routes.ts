@@ -22,7 +22,18 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin/user-summary",
     {
-      schema: { tags: ["admin"] },
+      schema: {
+        tags: ["admin"],
+        querystring: {
+          type: "object",
+          required: ["userId"],
+          properties: {
+            userId: { type: "string", format: "uuid" },
+            from: { type: "string", format: "date-time" },
+            to: { type: "string", format: "date-time" },
+          },
+        },
+      },
       preHandler: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getUserSummary,
@@ -31,7 +42,22 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin/top-performers",
     {
-      schema: { tags: ["admin"] },
+      schema: {
+        tags: ["admin"],
+        querystring: {
+          type: "object",
+          required: ["metric"],
+          properties: {
+            metric: {
+              type: "string",
+              enum: ["distance", "duration", "sessions"],
+            },
+            from: { type: "string", format: "date-time" },
+            to: { type: "string", format: "date-time" },
+            limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+          },
+        },
+      },
       preHandler: [authenticate, requireRole("ADMIN")],
     },
     analyticsController.getTopPerformers,

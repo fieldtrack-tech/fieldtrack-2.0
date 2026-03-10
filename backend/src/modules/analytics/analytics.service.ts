@@ -60,9 +60,10 @@ function aggregateExpenses(expenses: MinimalExpenseRow[]): {
 /**
  * Analytics service — aggregation logic for all three endpoints.
  *
- * All reads use session_summaries (pre-computed) over attendance_sessions
- * for distance and duration — this avoids scanning the raw locations table
- * which can hold tens of thousands of rows per session.
+ * All metric aggregation reads directly from attendance_sessions using
+ * the pre-computed total_distance_km / total_duration_seconds columns
+ * (populated by the distance worker after each checkout). This avoids
+ * an empty session_summaries table returning zero aggregates.
  */
 export const analyticsService = {
   /**
@@ -81,7 +82,7 @@ export const analyticsService = {
   ): Promise<OrgSummaryData> {
     validateDateRange(from, to);
 
-    // Step 1: resolve sessions in range — returns only {id, employee_id}
+    // Step 1: sessions in range — includes pre-computed distance and duration
     const sessions = await analyticsRepository.getSessionsInRange(
       request,
       from,
@@ -89,34 +90,19 @@ export const analyticsService = {
     );
 
     const totalSessions = sessions.length;
-    const sessionIds = sessions.map((s) => s.id);
-
-    // Step 2: session-level distance and duration from pre-computed summaries
-    const summaries = await analyticsRepository.getSummariesForSessions(
-      request,
-      sessionIds,
-    );
-
     let totalDistanceKm = 0;
     let totalDurationSeconds = 0;
-    const activeEmployeeIds = new Set<string>();
 
-    // Group by session_id from summary rows; employee identity resolved via sessions map
-    const sessionToEmployee = new Map(sessions.map((s) => [s.id, s.employee_id]));
-
-    for (const row of summaries) {
-      totalDistanceKm += row.total_distance_km;
-      totalDurationSeconds += row.total_duration_seconds;
-      const empId = sessionToEmployee.get(row.session_id);
-      if (empId) activeEmployeeIds.add(empId);
+    for (const row of sessions) {
+      totalDistanceKm += row.total_distance_km ?? 0;
+      totalDurationSeconds += row.total_duration_seconds ?? 0;
     }
 
-    // Step 3: expense aggregation in same date range
-    const expenseRows = await analyticsRepository.getExpensesInRange(
-      request,
-      from,
-      to,
-    );
+    // Step 2: expense aggregation and active employee count — independent, run in parallel
+    const [expenseRows, activeEmployeesCount] = await Promise.all([
+      analyticsRepository.getExpensesInRange(request, from, to),
+      analyticsRepository.getActiveEmployeesCount(request),
+    ]);
 
     const { totalExpenses, approvedExpenseAmount, rejectedExpenseAmount } =
       aggregateExpenses(expenseRows);
@@ -128,7 +114,7 @@ export const analyticsService = {
       totalExpenses,
       approvedExpenseAmount,
       rejectedExpenseAmount,
-      activeEmployeesCount: activeEmployeeIds.size,
+      activeEmployeesCount,
     };
   },
 
@@ -192,29 +178,21 @@ export const analyticsService = {
       };
     }
 
-    // Resolve this user's sessions in the date range
+    // Resolve this user's sessions in the date range — includes pre-computed metrics
     const sessions = await analyticsRepository.getSessionsForUser(
       request,
-      employeeId,  // ← Now passing employees.id
+      employeeId,  // ← employees.id, resolved above
       from,
       to,
     );
 
     const sessionsCount = sessions.length;
-    const sessionIds = sessions.map((s) => s.id);
-
-    // Session-level metrics from pre-computed summaries
-    const summaries = await analyticsRepository.getSummariesForSessions(
-      request,
-      sessionIds,
-    );
-
     let totalDistanceKm = 0;
     let totalDurationSeconds = 0;
 
-    for (const row of summaries) {
-      totalDistanceKm += row.total_distance_km;
-      totalDurationSeconds += row.total_duration_seconds;
+    for (const row of sessions) {
+      totalDistanceKm += row.total_distance_km ?? 0;
+      totalDurationSeconds += row.total_duration_seconds ?? 0;
     }
 
     // Expense aggregation for this user in the same date range
@@ -271,23 +249,14 @@ export const analyticsService = {
   ): Promise<TopPerformerEntry[]> {
     validateDateRange(from, to);
 
-    // Resolve sessions in range
+    // Resolve sessions in range — includes pre-computed distance and duration
     const sessions = await analyticsRepository.getSessionsInRange(
       request,
       from,
       to,
     );
 
-    const sessionIds = sessions.map((s) => s.id);
-
-    // Fetch minimal summary rows — only what aggregation needs
-    const summaries = await analyticsRepository.getSummariesForSessions(
-      request,
-      sessionIds,
-    );
-
-    // Group by session_id then join to employee via sessions map — O(n) single pass
-    const sessionToEmployee = new Map(sessions.map((s) => [s.id, s.employee_id]));
+    // Group by employee_id in a single pass — no session_summaries join needed
     const employeeMap = new Map<
       string,
       {
@@ -297,18 +266,16 @@ export const analyticsService = {
       }
     >();
 
-    for (const row of summaries) {
-      const employeeId = sessionToEmployee.get(row.session_id);
-      if (!employeeId) continue;
-      const existing = employeeMap.get(employeeId) ?? {
+    for (const row of sessions) {
+      const existing = employeeMap.get(row.employee_id) ?? {
         totalDistanceKm: 0,
         totalDurationSeconds: 0,
         sessionsCount: 0,
       };
-      existing.totalDistanceKm += row.total_distance_km;
-      existing.totalDurationSeconds += row.total_duration_seconds;
+      existing.totalDistanceKm += row.total_distance_km ?? 0;
+      existing.totalDurationSeconds += row.total_duration_seconds ?? 0;
       existing.sessionsCount += 1;
-      employeeMap.set(employeeId, existing);
+      employeeMap.set(row.employee_id, existing);
     }
 
     // Convert to array and sort descending by the chosen metric
