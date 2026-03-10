@@ -19,31 +19,30 @@ export const attendanceService = {
   async checkIn(request: FastifyRequest): Promise<AttendanceSession> {
     const userId = request.user.sub;
 
-    // 1. Verify employee exists and belongs to this organization.
-    const employeeExists = await attendanceRepository.findEmployeeInOrg(
+    // 1. Resolve users.id → employees.id (they are different PKs).
+    //    findEmployeeIdByUserId also validates is_active and org membership.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
       request,
       userId,
     );
-    if (!employeeExists) {
-      throw new NotFoundError(
-        "Employee not found in this organization.",
-      );
+    if (!employeeId) {
+      throw new NotFoundError("Employee not found in this organization.");
     }
 
     // 2. Prevent duplicate active sessions.
     const openSession = await attendanceRepository.findOpenSession(
       request,
-      userId,
+      employeeId,
     );
     if (openSession) {
       throw new EmployeeAlreadyCheckedIn();
     }
 
     request.log.info(
-      { userId, organizationId: request.organizationId },
+      { userId, employeeId, organizationId: request.organizationId },
       "Employee checked in",
     );
-    return attendanceRepository.createSession(request, userId);
+    return attendanceRepository.createSession(request, employeeId);
   },
 
   /**
@@ -53,16 +52,25 @@ export const attendanceService = {
   async checkOut(request: FastifyRequest): Promise<AttendanceSession> {
     const userId = request.user.sub;
 
-    const openSession = await attendanceRepository.findOpenSession(
+    // Resolve users.id → employees.id before querying employee_id column.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
       request,
       userId,
+    );
+    if (!employeeId) {
+      throw new NotFoundError("Employee not found in this organization.");
+    }
+
+    const openSession = await attendanceRepository.findOpenSession(
+      request,
+      employeeId,
     );
     if (!openSession) {
       throw new SessionAlreadyClosed();
     }
 
     request.log.info(
-      { userId, organizationId: request.organizationId },
+      { userId, employeeId, organizationId: request.organizationId },
       "Employee checked out",
     );
     const closedSession = await attendanceRepository.closeSession(
@@ -93,9 +101,17 @@ export const attendanceService = {
     limit: number,
   ): Promise<AttendanceSession[]> {
     const userId = request.user.sub;
-    return attendanceRepository.findSessionsByUser(
+
+    // Resolve users.id → employees.id before filtering by employee_id.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
       request,
       userId,
+    );
+    if (!employeeId) return [];
+
+    return attendanceRepository.findSessionsByUser(
+      request,
+      employeeId,
       page,
       limit,
     );

@@ -26,10 +26,18 @@ export const locationsService = {
   ): Promise<LocationRecord> {
     const start = performance.now();
     const userId = request.user.sub;
+
+    // Resolve users.id → employees.id before querying employee_id column.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
+      request,
+      userId,
+    );
+    if (!employeeId) throw new BadRequestError("Employee profile not found.");
+
     const isValid = await attendanceRepository.validateSessionActive(
       request,
       body.session_id,
-      userId,
+      employeeId,
     );
 
     if (!isValid) {
@@ -40,7 +48,7 @@ export const locationsService = {
 
     const record = await locationsRepository.createLocation(
       request,
-      userId,
+      employeeId,
       body.session_id,
       body,
     );
@@ -53,6 +61,7 @@ export const locationsService = {
     request.log.info(
       {
         userId,
+        employeeId,
         organizationId: request.organizationId,
         sessionId: body.session_id,
         latencyMs,
@@ -73,10 +82,18 @@ export const locationsService = {
   ): Promise<number> {
     const start = performance.now();
     const userId = request.user.sub;
+
+    // Resolve users.id → employees.id before querying employee_id column.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
+      request,
+      userId,
+    );
+    if (!employeeId) throw new BadRequestError("Employee profile not found.");
+
     const isValid = await attendanceRepository.validateSessionActive(
       request,
       body.session_id,
-      userId,
+      employeeId,
     );
 
     if (!isValid) {
@@ -87,7 +104,7 @@ export const locationsService = {
 
     const insertedCount = await locationsRepository.createLocationBatch(
       request,
-      userId,
+      employeeId,
       body.session_id,
       body.points,
     );
@@ -102,6 +119,7 @@ export const locationsService = {
     request.log.info(
       {
         userId,
+        employeeId,
         organizationId: request.organizationId,
         sessionId: body.session_id,
         insertedCount,
@@ -122,18 +140,14 @@ export const locationsService = {
     request: FastifyRequest,
     sessionId: string,
   ): Promise<LocationRecord[]> {
-    // Note: Since tenant isolation enforceTenant is applied in the repository,
-    // they can't access another org's session.
-    // However, an employee shouldn't access another employee's session even in the same org.
-    // The safest way is to fetch the session first via attendanceRepository with employee scope,
-    // but right now tenant enforcement prevents cross-org.
-    // To strictly prevent cross-user within the same org, we verify the user owns the locations:
-    // (We'll let findLocationsBySession fetch it, but we could add user_id filter to it later.
-    // For now, tenant isolation is guaranteed. To guarantee user isolation, we rely on the
-    // client sending the right sessionId, but a secure system should enforce it.
-    // We will assume findLocationsBySession is safe enough for Phase 3, but ideally location
-    // repo would also filter by user_id for employees.)
+    const userId = request.user.sub;
 
-    return locationsRepository.findLocationsBySession(request, sessionId, request.user.sub);
+    // Resolve users.id → employees.id before filtering location history by employee_id.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
+      request,
+      userId,
+    );
+
+    return locationsRepository.findLocationsBySession(request, sessionId, employeeId ?? undefined);
   },
 };

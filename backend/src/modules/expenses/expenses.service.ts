@@ -1,5 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { expensesRepository } from "./expenses.repository.js";
+import { attendanceRepository } from "../attendance/attendance.repository.js";
 import { NotFoundError, ExpenseAlreadyReviewed } from "../../utils/errors.js";
 import type {
   Expense,
@@ -31,9 +32,16 @@ export const expensesService = {
   ): Promise<Expense> {
     const userId = request.user.sub;
 
-    const expense = await expensesRepository.createExpense(
+    // Resolve users.id → employees.id before inserting into expenses.employee_id.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
       request,
       userId,
+    );
+    if (!employeeId) throw new NotFoundError("Employee profile not found.");
+
+    const expense = await expensesRepository.createExpense(
+      request,
+      employeeId,
       body,
     );
 
@@ -42,6 +50,7 @@ export const expensesService = {
         event: "expense_created",
         expenseId: expense.id,
         userId,
+        employeeId,
         organizationId: request.organizationId,
         amount: expense.amount,
       },
@@ -60,7 +69,15 @@ export const expensesService = {
     limit: number,
   ): Promise<Expense[]> {
     const userId = request.user.sub;
-    return expensesRepository.findExpensesByUser(request, userId, page, limit);
+
+    // Resolve users.id → employees.id before filtering by expenses.employee_id.
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
+      request,
+      userId,
+    );
+    if (!employeeId) return [];
+
+    return expensesRepository.findExpensesByUser(request, employeeId, page, limit);
   },
 
   /**

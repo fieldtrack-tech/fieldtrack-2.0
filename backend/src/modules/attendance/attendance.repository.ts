@@ -233,6 +233,32 @@ export const attendanceRepository = {
    * Phase 15.5 — column names updated:
    *   check_out_at → checkout_at
    */
+  /**
+   * Resolve a user's employee record ID from their auth user ID.
+   * employees.id (PK) ≠ users.id — this bridge is required before any query
+   * that filters by employee_id using the JWT sub claim.
+   */
+  async findEmployeeIdByUserId(
+    request: FastifyRequest,
+    userId: string,
+  ): Promise<string | null> {
+    const baseQuery = supabase
+      .from("employees")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_active", true);
+
+    const { data, error } = await enforceTenant(request, baseQuery)
+      .limit(1)
+      .maybeSingle();
+
+    if (error && error.code !== "PGRST116") {
+      throw new Error(`Failed to resolve employee: ${error.message}`);
+    }
+
+    return data?.id ?? null;
+  },
+
   async findSessionsNeedingRecalculation(
     log: FastifyBaseLogger,
   ): Promise<{ id: string }[]> {

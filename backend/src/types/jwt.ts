@@ -19,14 +19,3 @@ export const jwtPayloadSchema = z.object({
 });
 
 export type JwtPayload = z.infer<typeof jwtPayloadSchema>;
-
-/**
- * Authenticated user attached to Fastify request.
- * Contains the essential identity and authorization context.
- */
-export interface AuthenticatedUser {
-    id: string;
-    email?: string;
-    role: "ADMIN" | "EMPLOYEE";
-    organizationId: string;
-}

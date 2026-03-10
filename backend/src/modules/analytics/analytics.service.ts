@@ -80,7 +80,7 @@ export const analyticsService = {
   ): Promise<OrgSummaryData> {
     validateDateRange(from, to);
 
-    // Step 1: resolve sessions in range — returns only {id, user_id}
+    // Step 1: resolve sessions in range — returns only {id, employee_id}
     const sessions = await analyticsRepository.getSessionsInRange(
       request,
       from,

@@ -1,5 +1,5 @@
-import "@fastify/jwt";
-import type { JwtPayload, AuthenticatedUser } from "./jwt.js";
+import "fastify";
+import type { JwtPayload } from "./jwt.js";
 
 declare module "@fastify/jwt" {
     interface FastifyJWT {
