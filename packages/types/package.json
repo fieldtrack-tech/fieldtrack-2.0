@@ -1,0 +1,23 @@
+{
+  "name": "@fieldtrack/types",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Shared API contract types for FieldTrack — single source of truth for frontend and backend.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

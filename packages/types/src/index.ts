@@ -1,0 +1,116 @@
+/**
+ * @fieldtrack/types — shared API contract types
+ *
+ * These interfaces define the exact shapes returned by the FieldTrack API.
+ * Both the backend (response serialization) and the frontend (hook types,
+ * component props) import from here so a single change keeps both in sync.
+ *
+ * Rules:
+ *   - Interfaces must mirror actual DB column names and nullability.
+ *   - No runtime code — this package is pure type declarations.
+ *   - `distance_recalculation_status` is intentionally typed `string`; the
+ *     frontend has no reason to switch on the specific enum values.
+ */
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+export type UserRole = "ADMIN" | "EMPLOYEE";
+export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+// ─── Database row shapes (API response payloads) ──────────────────────────────
+
+export interface AttendanceSession {
+  id: string;
+  employee_id: string;
+  organization_id: string;
+  checkin_at: string;
+  checkout_at: string | null;
+  total_distance_km: number | null;
+  total_duration_seconds: number | null;
+  distance_recalculation_status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GpsLocation {
+  id: string;
+  session_id: string;
+  employee_id: string;
+  organization_id: string;
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  recorded_at: string;
+  sequence_number: number | null;
+  is_duplicate: boolean;
+}
+
+export interface Expense {
+  id: string;
+  employee_id: string;
+  organization_id: string;
+  amount: number;
+  description: string;
+  receipt_url: string | null;
+  status: ExpenseStatus;
+  submitted_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Analytics API response shapes ───────────────────────────────────────────
+
+export interface OrgSummaryData {
+  totalSessions: number;
+  totalDistanceKm: number;
+  totalDurationSeconds: number;
+  totalExpenses: number;
+  approvedExpenseAmount: number;
+  rejectedExpenseAmount: number;
+  activeEmployeesCount: number;
+}
+
+export interface UserSummaryData {
+  sessionsCount: number;
+  totalDistanceKm: number;
+  totalDurationSeconds: number;
+  totalExpenses: number;
+  approvedExpenseAmount: number;
+  averageDistancePerSession: number;
+  averageSessionDurationSeconds: number;
+}
+
+export interface TopPerformerEntry {
+  employeeId: string;
+  employeeName: string;
+  totalDistanceKm?: number;
+  totalDurationSeconds?: number;
+  sessionsCount?: number;
+}
+
+// ─── Generic API response wrappers ───────────────────────────────────────────
+
+export interface SuccessResponse<T> {
+  success: true;
+  data: T;
+}
+
+export interface ErrorResponse {
+  success: false;
+  error: string;
+  requestId: string;
+}
+
+export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
+
+export interface PaginatedResponse<T> {
+  success: true;
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+  };
+}
