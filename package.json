@@ -1,0 +1,19 @@
+{
+  "name": "fieldtrack",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace packages/types && npm run build --workspace apps/api",
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "typecheck": "npm run build --workspace packages/types && npm run typecheck --workspace apps/api && npm run typecheck --workspace apps/web",
+    "test": "npm run test --workspace apps/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
