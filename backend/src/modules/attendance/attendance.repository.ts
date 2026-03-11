@@ -182,16 +182,19 @@ export const attendanceRepository = {
     page: number,
     limit: number,
   ): Promise<AttendanceSession[]> {
+    console.log("ORG FROM REQUEST:", request.organizationId);
+    
     const baseQuery = supabase
       .from("attendance_sessions")
-      .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at")
+      .select("*")
       .order("checkin_at", { ascending: false });
 
-    const { data, error } = await applyPagination(
-      enforceTenant(request, baseQuery),
-      page,
-      limit,
-    );
+    const query = enforceTenant(request, baseQuery);
+    console.log("QUERY ORG FILTER:", request.organizationId);
+
+    const { data, error } = await applyPagination(query, page, limit);
+    
+    console.log("ROWS RETURNED:", data?.length);
 
     if (error) {
       throw new Error(`Failed to fetch org sessions: ${error.message}`);

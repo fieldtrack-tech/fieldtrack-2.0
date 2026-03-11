@@ -31,5 +31,16 @@ export function enforceTenant<T extends TenantScopable>(
     context: TenantContext | FastifyRequest,
     query: T,
 ): T {
-    return query.eq("organization_id", context.organizationId);
+    const orgId = context.organizationId;
+    
+    // Diagnostic: log if organizationId is missing
+    if (!orgId) {
+        console.error("[enforceTenant] CRITICAL: organizationId is undefined!", {
+            hasContext: !!context,
+            contextKeys: Object.keys(context),
+        });
+        throw new Error("Tenant enforcement failed: organizationId missing from context");
+    }
+    
+    return query.eq("organization_id", orgId);
 }
