@@ -1,40 +1,146 @@
+# ============================================
+# Centralized .gitignore for Full Stack App
+# ============================================
+
+# ----------------
+# Infrastructure
+# ----------------
 # Monitoring data
 infra/tempo/data/
 infra/prometheus/data/
 infra/grafana/data/
 
-# Environment files
-.env
-.env.*
-!.env.example
-
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-
-# Test coverage
-coverage/
-
-# TypeScript cache
-*.tsbuildinfo
-
 # Deployment history (VPS-side file, never committed)
 .deploy_history
 .last_deploy
 
-# OS files
-.DS_Store
-Thumbs.db
+# ----------------
+# Dependencies
+# ----------------
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+/.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
 
-# IDE
+# Optional npm cache directory
+.npm
+
+# ----------------
+# Environment Files
+# ----------------
+.env
+.env.*
+.env*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# ----------------
+# Build Output
+# ----------------
+# Backend
+dist/
+build/
+
+# Frontend (Next.js)
+.next/
+out/
+/.next/
+/out/
+
+# ----------------
+# Testing
+# ----------------
+coverage/
+*.test.ts.snap
+*.test.tsx.snap
+.nyc_output/
+
+# ----------------
+# TypeScript
+# ----------------
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# ----------------
+# Logs
+# ----------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+
+# ----------------
+# OS Files
+# ----------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ----------------
+# IDE / Editors
+# ----------------
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+*.sublime-project
+*.sublime-workspace
 
-# Logs
-*.log
-logs/
-npm-debug.log*
+# ----------------
+# Temporary Files
+# ----------------
+*.tmp
+*.temp
+.cache/
+
+# ----------------
+# Optional Caches
+# ----------------
+.eslintcache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# ----------------
+# Deployment
+# ----------------
+.vercel
+
+# ----------------
+# Misc
+# ----------------
+*.pem
+.repl_history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Storybook
+storybook-static/
+
+# Sentry
+.sentryclirc
