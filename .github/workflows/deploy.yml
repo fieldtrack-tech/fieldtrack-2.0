@@ -104,7 +104,7 @@ jobs:
             git fetch origin
             git reset --hard origin/master
             chmod +x scripts/deploy-bluegreen.sh
-            ./scripts/deploy-bluegreen.sh ${{ env.SHA_SHORT }}
+            ./scripts/deploy-bluegreen.sh "$SHA_SHORT"
 
 
   smoke-tests:
@@ -139,8 +139,10 @@ jobs:
           echo "API did not become healthy"
           exit 1
 
+      - name: Install jq (needed for JSON parsing)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Run API Smoke Tests
-        shell: pwsh
         env:
           FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
           FT_EMP_EMAIL: ${{ secrets.FT_EMP_EMAIL }}
@@ -150,7 +152,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          ./backend/scripts/smoke-test.ps1
+          chmod +x backend/scripts/smoke-test.sh
+          ./backend/scripts/smoke-test.sh
 
       - name: Upload smoke test report
         uses: actions/upload-artifact@v4
