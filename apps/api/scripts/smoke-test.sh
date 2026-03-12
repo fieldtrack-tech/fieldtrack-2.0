@@ -16,7 +16,6 @@ PASS=0
 FAIL=0
 TMP_HEADERS=$(mktemp)
 TMP_BODY=$(mktemp)
-RESPONSE_TRUSTED=0
 
 cleanup() {
   rm -f "$TMP_HEADERS" "$TMP_BODY"
@@ -48,39 +47,19 @@ request() {
       -X "$METHOD" "$API$URL")
   fi
 
-  mark_response_trusted
-
   echo "$STATUS"
 }
 
 request_health() {
   STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" "$BASE_URL/health")
-  mark_response_trusted
   echo "$STATUS"
-}
-
-mark_response_trusted() {
-  RESPONSE_TRUSTED=0
-
-  if grep -qi "^server: nginx" "$TMP_HEADERS"; then
-    RESPONSE_TRUSTED=1
-    return 0
-  fi
-
-  # Accept any valid JSON payload even when server header is rewritten by CDN/proxy.
-  if jq -e . "$TMP_BODY" >/dev/null 2>&1; then
-    RESPONSE_TRUSTED=1
-    return 0
-  fi
-
-  return 1
 }
 
 validate_api_response() {
   ENDPOINT=$1
 
-  if [ "$RESPONSE_TRUSTED" -ne 1 ]; then
-    echo "Invalid response source for $ENDPOINT: expected 'server: nginx' header or JSON body"
+  if ! jq -e . "$TMP_BODY" >/dev/null 2>&1; then
+    echo "Invalid JSON response for $ENDPOINT"
     return 1
   fi
 
