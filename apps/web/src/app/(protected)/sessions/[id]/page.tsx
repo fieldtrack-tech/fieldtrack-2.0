@@ -1,6 +1,7 @@
 "use client";
 
 import { useMyRoute } from "@/hooks/queries/useRoutes";
+import { useMySession } from "@/hooks/queries/useSessions";
 import { RouteMap } from "@/components/maps/RouteMap";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { LoadingSkeleton } from "@/components/LoadingSkeleton";
@@ -14,13 +15,18 @@ interface SessionDetailPageProps {
 export default function SessionDetailPage({ params }: SessionDetailPageProps) {
   const { id } = params;
   const { data: locations, isLoading, error } = useMyRoute(id);
+  const { data: session } = useMySession(id);
 
   const sorted = [...(locations ?? [])].sort(
     (a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime()
   );
 
-  const firstLoc = sorted[0];
-  const lastLoc = sorted[sorted.length - 1];
+  // Use session record fields as authoritative source for times/duration.
+  // Fall back to GPS point timestamps only if no session is in cache.
+  const checkinAt = session?.checkin_at ?? sorted[0]?.recorded_at ?? null;
+  const checkoutAt = session?.checkout_at ?? (sorted.length > 1 ? sorted[sorted.length - 1].recorded_at : null);
+  const durationSeconds = session?.total_duration_seconds ?? null;
+  const distanceKm = session?.total_distance_km ?? null;
 
   return (
     <div className="space-y-6">
@@ -43,10 +49,10 @@ export default function SessionDetailPage({ params }: SessionDetailPageProps) {
             </CardHeader>
             <CardContent>
               <p className="text-lg font-semibold">
-                {firstLoc ? formatTime(firstLoc.recorded_at) : "—"}
+                {checkinAt ? formatTime(checkinAt) : "—"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {firstLoc ? formatDate(firstLoc.recorded_at) : ""}
+                {checkinAt ? formatDate(checkinAt) : ""}
               </p>
             </CardContent>
           </Card>
@@ -58,10 +64,10 @@ export default function SessionDetailPage({ params }: SessionDetailPageProps) {
             </CardHeader>
             <CardContent>
               <p className="text-lg font-semibold">
-                {lastLoc && lastLoc !== firstLoc ? formatTime(lastLoc.recorded_at) : "—"}
+                {checkoutAt ? formatTime(checkoutAt) : "—"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {lastLoc && lastLoc !== firstLoc ? formatDate(lastLoc.recorded_at) : ""}
+                {checkoutAt ? formatDate(checkoutAt) : ""}
               </p>
             </CardContent>
           </Card>
@@ -83,15 +89,7 @@ export default function SessionDetailPage({ params }: SessionDetailPageProps) {
             </CardHeader>
             <CardContent>
               <p className="text-lg font-semibold">
-                {firstLoc && lastLoc && lastLoc !== firstLoc
-                  ? formatDuration(
-                      Math.floor(
-                        (new Date(lastLoc.recorded_at).getTime() -
-                          new Date(firstLoc.recorded_at).getTime()) /
-                          1000
-                      )
-                    )
-                  : "—"}
+                {durationSeconds != null ? formatDuration(durationSeconds) : "—"}
               </p>
             </CardContent>
           </Card>
@@ -111,24 +109,9 @@ export default function SessionDetailPage({ params }: SessionDetailPageProps) {
         </CardContent>
       </Card>
 
-      {firstLoc && (
+      {distanceKm != null && (
         <p className="text-xs text-muted-foreground">
-          Approximate distance:{" "}
-          {formatDistance(
-            sorted.reduce((acc, loc, i) => {
-              if (i === 0) return acc;
-              const prev = sorted[i - 1];
-              const R = 6371;
-              const dLat = ((loc.latitude - prev.latitude) * Math.PI) / 180;
-              const dLon = ((loc.longitude - prev.longitude) * Math.PI) / 180;
-              const a =
-                Math.sin(dLat / 2) ** 2 +
-                Math.cos((prev.latitude * Math.PI) / 180) *
-                  Math.cos((loc.latitude * Math.PI) / 180) *
-                  Math.sin(dLon / 2) ** 2;
-              return acc + R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            }, 0)
-          )}
+          Approximate distance: {formatDistance(distanceKm)}
         </p>
       )}
     </div>
