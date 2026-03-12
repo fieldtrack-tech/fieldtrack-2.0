@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${FT_API_BASE_URL:-https://fieldtrack.meowsician.tech}"
+BASE_URL="${FT_API_BASE_URL:-https://api.fieldtrack.meowsician.tech}"
 
 EMP_EMAIL="${FT_EMP_EMAIL:-}"
 EMP_PASSWORD="${FT_EMP_PASSWORD:-}"

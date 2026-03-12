@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # ── Configuration (EDIT THESE) ─────────────────────────────────────────────────
-DOMAIN="fieldtrack.meowsician.tech"         # Production domain
+DOMAIN="api.fieldtrack.meowsician.tech"     # Production API domain
 GH_USER="rajashish147"                      # GitHub username
 GH_PAT=""                                   # GitHub Personal Access Token (packages:read)
 DEPLOY_USER="ashish"                        # Non-root user for deployment

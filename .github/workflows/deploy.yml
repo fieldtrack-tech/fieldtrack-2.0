@@ -130,7 +130,7 @@ jobs:
           echo "Waiting for API..."
 
           for i in {1..30}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://fieldtrack.meowsician.tech/health)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.fieldtrack.meowsician.tech/health)
 
             if [ "$STATUS" = "200" ]; then
               echo "API is healthy"

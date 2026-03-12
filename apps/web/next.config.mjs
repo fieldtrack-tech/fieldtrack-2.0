@@ -11,7 +11,7 @@ const nextConfig = {
     return [
       {
         source: "/api/proxy/:path*",
-        destination: "https://fieldtrack.meowsician.tech/:path*",
+        destination: "https://api.fieldtrack.meowsician.tech/:path*",
       },
     ];
   },

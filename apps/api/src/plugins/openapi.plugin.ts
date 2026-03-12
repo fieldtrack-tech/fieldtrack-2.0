@@ -88,8 +88,12 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
       servers: [
         {
           url: "/",
-          description: "Current server",
+          description: "Current server",          
         },
+        {
+          url: "http://localhost:3001",
+          description: "Local development",
+        }
       ],
       tags: [
         { name: "health", description: "Health check and system status endpoints" },
