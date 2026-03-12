@@ -45,6 +45,9 @@ jobs:
       - name: TypeScript compilation check
         run: npm run typecheck
 
+      - name: Build (compile TypeScript)
+        run: npm run build
+
       - name: Run tests
         working-directory: apps/api
         run: npm run test
