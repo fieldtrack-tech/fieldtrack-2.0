@@ -159,6 +159,11 @@ export async function authenticate(
             ? error
             : new UnauthorizedError("Invalid or missing authentication token");
 
-        reply.status(err.statusCode).send({ error: err.message });
+        // `return` after send is required in Fastify async preValidation hooks.
+        // Without it, the hook resolves normally and Fastify proceeds to call the
+        // route handler — which then hits "Reply already sent". The client still
+        // receives 401, but Fastify logs a spurious internal error.
+        void reply.status(err.statusCode).send({ error: err.message });
+        return;
     }
 }
