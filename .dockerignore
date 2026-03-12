@@ -9,8 +9,9 @@ node_modules
 apps/*/node_modules
 packages/*/node_modules
 
-# Frontend — not needed for the API image
-apps/web
+# Frontend — exclude all web source, but keep package.json for workspace resolution
+apps/web/**
+!apps/web/package.json
 
 # Build artefacts (Docker regenerates these)
 apps/api/dist

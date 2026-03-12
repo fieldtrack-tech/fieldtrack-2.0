@@ -4,17 +4,18 @@ FROM node:24-alpine AS builder
 
 WORKDIR /workspace
 
-# Install API dependencies first (for layer caching)
-COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
-WORKDIR /workspace/apps/api
+# Install workspace dependencies first (for layer caching)
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/types/package.json ./packages/types/
+
 RUN npm ci
 
-# Copy shared types source and compile to .d.ts using api's TypeScript install.
-# dist/ is gitignored so it must be generated here.
-WORKDIR /workspace
-COPY packages/types/package.json packages/types/tsconfig.json ./packages/types/
+# Copy shared types source and compile
+COPY packages/types/tsconfig.json ./packages/types/
 COPY packages/types/src/ ./packages/types/src/
-RUN apps/api/node_modules/.bin/tsc -p packages/types/tsconfig.json
+RUN npm run build -w packages/types
 
 WORKDIR /workspace/apps/api
 COPY apps/api/tsconfig.json ./
@@ -29,10 +30,15 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-COPY apps/api/package.json apps/api/package-lock.json ./
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/types/package.json ./packages/types/
+
 RUN npm ci --omit=dev
 
 COPY --from=builder /workspace/apps/api/dist ./dist
+COPY --from=builder /workspace/packages/types/dist ./packages/types/dist
 
 # Phase 11: curl required for Docker HEALTHCHECK
 RUN apk add --no-cache curl

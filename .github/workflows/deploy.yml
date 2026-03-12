@@ -36,17 +36,11 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          # Cache key based on package.json files, not the lockfile.
-          # The lockfile is deleted below to avoid npm/cli#4828: a lockfile
-          # generated on Windows omits linux-x64 optional rollup binaries,
-          # causing vitest to fail. Fresh npm install resolves platform-correct
-          # optional deps every time.
-          cache-dependency-path: "**/package.json"
+          # Cache key based on package-lock.json to correctly restore dependencies.
+          cache-dependency-path: "**/package-lock.json"
 
       - name: Install dependencies
-        run: |
-          rm -f package-lock.json
-          npm install
+        run: npm ci
 
       - name: TypeScript compilation check
         run: npm run typecheck
