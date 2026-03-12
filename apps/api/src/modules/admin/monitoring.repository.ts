@@ -3,6 +3,7 @@ import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { AdminSession } from "../../types/db.js";
+import { BadRequestError } from "../../utils/errors.js";
 
 const MONITORING_COLS = "id, admin_id, organization_id, started_at, ended_at, created_at";
 
@@ -24,6 +25,11 @@ export const monitoringRepository = {
       .single();
 
     if (error) {
+      // Unique constraint "one_active_monitoring_session" fires when the admin
+      // already has an open session (ended_at IS NULL).
+      if (error.code === "23505") {
+        throw new BadRequestError("A monitoring session is already active. Stop it before starting a new one.");
+      }
       throw new Error(`Failed to start monitoring session: ${error.message}`);
     }
     return data as AdminSession;
