@@ -14,7 +14,7 @@ APP_PORT=3000
 NETWORK="fieldtrack_network"
 
 ENV_FILE="/home/ashish/FieldTrack-2.0/apps/api/.env"
-NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack"
+NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
 ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
 DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
 MAX_HISTORY=5
