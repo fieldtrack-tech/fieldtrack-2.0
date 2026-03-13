@@ -24,7 +24,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/dashboard/my-summary",
     {
-      schema: { tags: ["dashboard"], response: { 200: dashboardSummaryResponseSchema } },
+      schema: { tags: ["dashboard"], response: { 200: dashboardSummaryResponseSchema.describe("Personal dashboard summary for the current week") } },
       preValidation: [authenticate],
     },
     dashboardController.getMySummary,

@@ -43,7 +43,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-in",
     {
-      schema: { tags: ["attendance"], response: { 201: singleObjectResponseSchema } },
+      schema: { tags: ["attendance"], response: { 201: singleObjectResponseSchema.describe("Session check-in record") } },
       preValidation: [authenticate],
     },
     attendanceController.checkIn,
@@ -53,7 +53,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-out",
     {
-      schema: { tags: ["attendance"], response: { 200: singleObjectResponseSchema } },
+      schema: { tags: ["attendance"], response: { 200: singleObjectResponseSchema.describe("Session check-out record") } },
       preValidation: [authenticate],
     },
     attendanceController.checkOut,
@@ -64,7 +64,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { sessionId: string } }>(
     "/attendance/:sessionId/recalculate",
     {
-      schema: { tags: ["attendance"], response: { 200: singleObjectResponseSchema } },
+      schema: { tags: ["attendance"], response: { 200: singleObjectResponseSchema.describe("Recalculated session record") } },
       config: {
         rateLimit: {
           max: 5,
@@ -84,7 +84,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["attendance"],
         querystring: paginationSchema,
-        response: { 200: sessionListResponseSchema },
+        response: { 200: sessionListResponseSchema.describe("Employee's own attendance sessions") },
       },
       // preValidation ensures 401 fires before querystring validation
       preValidation: [authenticate],
@@ -99,7 +99,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: paginationSchema,
-        response: { 200: sessionListResponseSchema },
+        response: { 200: sessionListResponseSchema.describe("All organization attendance sessions") },
       },
       // preValidation ensures 401/403 fires before querystring validation
       preValidation: [authenticate, requireRole("ADMIN")],

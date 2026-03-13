@@ -45,7 +45,7 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
     app.post(
         "/locations",
         {
-            schema: { tags: ["locations"], body: createLocationSchema, response: { 201: locationResponseSchema } },
+            schema: { tags: ["locations"], body: createLocationSchema, response: { 201: locationResponseSchema.describe("Recorded GPS location") } },
             config: {
                 rateLimit: {
                     max: 10,
@@ -63,7 +63,7 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
     app.post(
         "/locations/batch",
         {
-            schema: { tags: ["locations"], body: createLocationBatchSchema, response: { 201: batchLocationResponseSchema } },
+            schema: { tags: ["locations"], body: createLocationBatchSchema, response: { 201: batchLocationResponseSchema.describe("Batch GPS location insertion result") } },
             config: {
                 rateLimit: {
                     max: 10,
@@ -81,7 +81,7 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
     app.get(
         "/locations/my-route",
         {
-            schema: { tags: ["locations"], querystring: sessionQuerySchema, response: { 200: locationListResponseSchema } },
+            schema: { tags: ["locations"], querystring: sessionQuerySchema, response: { 200: locationListResponseSchema.describe("GPS route for a session") } },
             // preValidation ensures 401/403 fires before querystring validation
             preValidation: [authenticate, requireRole("EMPLOYEE")],
         },

@@ -62,7 +62,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: orgSummaryQuerySchema,
-        response: { 200: orgSummaryResponseSchema },
+        response: { 200: orgSummaryResponseSchema.describe("Organization analytics summary") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -75,7 +75,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: userSummaryQuerySchema,
-        response: { 200: userSummaryResponseSchema },
+        response: { 200: userSummaryResponseSchema.describe("User analytics summary") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -88,7 +88,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: topPerformersQuerySchema,
-        response: { 200: topPerformersResponseSchema },
+        response: { 200: topPerformersResponseSchema.describe("Top performing employees list") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

@@ -35,7 +35,7 @@ export async function monitoringRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/admin/start-monitoring",
     {
-      schema: { tags: ["admin"], response: { 201: monitoringSessionResponseSchema } },
+      schema: { tags: ["admin"], response: { 201: monitoringSessionResponseSchema.describe("Started monitoring session") } },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     monitoringController.start,
@@ -44,7 +44,7 @@ export async function monitoringRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/admin/stop-monitoring",
     {
-      schema: { tags: ["admin"], response: { 200: monitoringSessionResponseSchema } },
+      schema: { tags: ["admin"], response: { 200: monitoringSessionResponseSchema.describe("Stopped monitoring session") } },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     monitoringController.stop,
@@ -53,7 +53,7 @@ export async function monitoringRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin/monitoring-history",
     {
-      schema: { tags: ["admin"], querystring: monitoringPaginationSchema, response: { 200: monitoringHistoryResponseSchema } },
+      schema: { tags: ["admin"], querystring: monitoringPaginationSchema, response: { 200: monitoringHistoryResponseSchema.describe("Monitoring session history") } },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     monitoringController.history,

@@ -29,7 +29,7 @@ export async function employeesRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/admin/employees",
     {
-      schema: { tags: ["admin"], body: createEmployeeBodySchema, response: { 201: employeeResponseSchema } },
+      schema: { tags: ["admin"], body: createEmployeeBodySchema, response: { 201: employeeResponseSchema.describe("Created employee record") } },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     employeesController.create,

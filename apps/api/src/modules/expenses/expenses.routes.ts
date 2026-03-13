@@ -53,7 +53,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/expenses",
     {
-      schema: { tags: ["expenses"], body: createExpenseBodySchema, response: { 201: singleExpenseResponseSchema } },
+      schema: { tags: ["expenses"], body: createExpenseBodySchema, response: { 201: singleExpenseResponseSchema.describe("Created expense record") } },
       config: {
         rateLimit: {
           max: 10,
@@ -75,7 +75,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["expenses"],
         querystring: expensePaginationSchema,
-        response: { 200: expenseListResponseSchema },
+        response: { 200: expenseListResponseSchema.describe("Employee's own expense records") },
       },
       // No role restriction — service returns [] when employeeId is absent (admin users)
       preValidation: [authenticate],
@@ -89,7 +89,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: expensePaginationSchema,
-        response: { 200: expenseListResponseSchema },
+        response: { 200: expenseListResponseSchema.describe("All organization expense records") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -99,7 +99,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string } }>(
     "/admin/expenses/:id",
     {
-      schema: { tags: ["admin"], body: updateExpenseStatusBodySchema, response: { 200: singleExpenseResponseSchema } },
+      schema: { tags: ["admin"], body: updateExpenseStatusBodySchema, response: { 200: singleExpenseResponseSchema.describe("Updated expense record") } },
       // preValidation ensures auth/role fires before body validation
       preValidation: [authenticate, requireRole("ADMIN")],
     },
