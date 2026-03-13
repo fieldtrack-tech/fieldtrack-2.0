@@ -193,9 +193,10 @@ describe("Admin Monitoring Integration Tests", () => {
     });
 
     it("returns 200 with history list for ADMIN", async () => {
-      vi.mocked(monitoringRepository.findHistory).mockResolvedValue([
-        closedMonitoringSession,
-      ] as never);
+      vi.mocked(monitoringRepository.findHistory).mockResolvedValue({
+        data: [closedMonitoringSession],
+        total: 1,
+      } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -211,7 +212,7 @@ describe("Admin Monitoring Integration Tests", () => {
     });
 
     it("returns 200 with empty list when no history exists", async () => {
-      vi.mocked(monitoringRepository.findHistory).mockResolvedValue([] as never);
+      vi.mocked(monitoringRepository.findHistory).mockResolvedValue({ data: [], total: 0 } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -225,7 +226,7 @@ describe("Admin Monitoring Integration Tests", () => {
     });
 
     it("passes pagination params to the repository", async () => {
-      vi.mocked(monitoringRepository.findHistory).mockResolvedValue([] as never);
+      vi.mocked(monitoringRepository.findHistory).mockResolvedValue({ data: [], total: 0 } as never);
 
       await app.inject({
         method: "GET",

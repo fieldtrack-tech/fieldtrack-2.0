@@ -181,9 +181,10 @@ describe("Attendance Integration Tests", () => {
     });
 
     it("returns 200 with a list of sessions", async () => {
-      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue([
-        openSession,
-      ] as never);
+      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({
+        data: [openSession],
+        total: 1,
+      } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -198,7 +199,7 @@ describe("Attendance Integration Tests", () => {
     });
 
     it("passes pagination params to the repository", async () => {
-      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue([] as never);
+      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({ data: [], total: 0 } as never);
 
       await app.inject({
         method: "GET",
@@ -238,7 +239,7 @@ describe("Attendance Integration Tests", () => {
     });
 
     it("returns 200 for an ADMIN", async () => {
-      vi.mocked(attendanceRepository.findSessionsByOrg).mockResolvedValue([] as never);
+      vi.mocked(attendanceRepository.findSessionsByOrg).mockResolvedValue({ data: [], total: 0 } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -254,7 +255,7 @@ describe("Attendance Integration Tests", () => {
 
   describe("Multi-tenant isolation", () => {
     it("propagates organizationId from JWT to the repository call", async () => {
-      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue([] as never);
+      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({ data: [], total: 0 } as never);
 
       const tokenOrgB = signEmployeeToken(app, TEST_EMPLOYEE_ID, TEST_ORG_ID_B);
       await app.inject({
@@ -272,7 +273,7 @@ describe("Attendance Integration Tests", () => {
     });
 
     it("two different org tokens result in separate organizationId values", async () => {
-      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue([] as never);
+      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({ data: [], total: 0 } as never);
 
       const tokenOrgA = signEmployeeToken(app, TEST_EMPLOYEE_ID, TEST_ORG_ID);
       const tokenOrgB = signEmployeeToken(app, TEST_EMPLOYEE_ID, TEST_ORG_ID_B);

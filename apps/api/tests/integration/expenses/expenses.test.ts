@@ -233,9 +233,10 @@ describe("Expenses Integration Tests", () => {
     });
 
     it("returns 200 with employee's expenses", async () => {
-      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue([
-        pendingExpense,
-      ] as never);
+      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue({
+        data: [pendingExpense],
+        total: 1,
+      } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -250,7 +251,7 @@ describe("Expenses Integration Tests", () => {
     });
 
     it("calls repository with authenticated employee id", async () => {
-      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue([] as never);
+      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue({ data: [], total: 0 } as never);
 
       await app.inject({
         method: "GET",
@@ -269,7 +270,7 @@ describe("Expenses Integration Tests", () => {
     // ─── Pagination behavior ──────────────────────────────────────────────────
 
     it("accepts valid page and limit params", async () => {
-      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue([] as never);
+      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue({ data: [], total: 0 } as never);
 
       const res = await app.inject({
         method: "GET",
@@ -408,7 +409,7 @@ describe("Expenses Integration Tests", () => {
 
   describe("Multi-tenant isolation", () => {
     it("propagates organizationId from JWT when listing expenses", async () => {
-      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue([] as never);
+      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue({ data: [], total: 0 } as never);
 
       const tokenOrgB = signEmployeeToken(app, TEST_EMPLOYEE_ID, TEST_ORG_ID_B);
       await app.inject({
