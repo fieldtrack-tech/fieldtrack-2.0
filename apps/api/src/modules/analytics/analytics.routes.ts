@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { analyticsController } from "./analytics.controller.js";
@@ -7,6 +8,37 @@ import {
   userSummaryQuerySchema,
   topPerformersQuerySchema,
 } from "./analytics.schema.js";
+
+const orgSummaryResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    totalSessions: z.number(),
+    totalDistanceKm: z.number(),
+    totalDurationSeconds: z.number(),
+    totalExpenses: z.number(),
+    approvedExpenseAmount: z.number(),
+    rejectedExpenseAmount: z.number(),
+    activeEmployeesCount: z.number(),
+  }),
+});
+
+const topPerformersResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(z.any()),
+});
+
+const userSummaryResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    sessionsCount: z.number(),
+    totalDistanceKm: z.number(),
+    totalDurationSeconds: z.number(),
+    totalExpenses: z.number(),
+    approvedExpenseAmount: z.number(),
+    averageDistancePerSession: z.number(),
+    averageSessionDurationSeconds: z.number(),
+  }),
+});
 
 /**
  * Analytics routes — all endpoints require JWT authentication + ADMIN role.
@@ -21,6 +53,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: orgSummaryQuerySchema,
+        response: { 200: orgSummaryResponseSchema },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -33,6 +66,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: userSummaryQuerySchema,
+        response: { 200: userSummaryResponseSchema },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -45,6 +79,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: topPerformersQuerySchema,
+        response: { 200: topPerformersResponseSchema },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

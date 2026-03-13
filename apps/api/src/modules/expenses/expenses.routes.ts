@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { expensesController } from "./expenses.controller.js";
@@ -7,6 +8,11 @@ import {
   expensePaginationSchema,
   updateExpenseStatusBodySchema,
 } from "./expenses.schema.js";
+
+const expenseListResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(z.any()),
+});
 
 /**
  * Expense routes.
@@ -42,7 +48,11 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/expenses/my",
     {
-      schema: { tags: ["expenses"], querystring: expensePaginationSchema },
+      schema: {
+        tags: ["expenses"],
+        querystring: expensePaginationSchema,
+        response: { 200: expenseListResponseSchema },
+      },
       // No role restriction — service returns [] when employeeId is absent (admin users)
       preValidation: [authenticate],
     },
@@ -52,7 +62,11 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin/expenses",
     {
-      schema: { tags: ["admin"], querystring: expensePaginationSchema },
+      schema: {
+        tags: ["admin"],
+        querystring: expensePaginationSchema,
+        response: { 200: expenseListResponseSchema },
+      },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     expensesController.getOrgAll,

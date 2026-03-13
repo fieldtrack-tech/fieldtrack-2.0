@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "crypto";
 import { trace, context } from "@opentelemetry/api";
+import fp from "fastify-plugin";
 import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
@@ -85,44 +86,51 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // Phase 10: Add x-request-id to every reply for end-to-end tracing.
-  // Also stamp the final status code on the span; the span is still open
-  // during onSend (it closes after the socket write completes).
-  // SAFETY: Ensure response payload is never undefined/null for JSON endpoints
-  app.addHook("onSend", async (request, reply, payload) => {
-    void reply.header("x-request-id", request.id);
-    const span = trace.getSpan(context.active());
-    if (span) {
-      span.setAttribute("http.status_code", reply.statusCode);
-    }
+  // Phase 10: x-request-id header, span stamping, and empty-response safety net.
+  //
+  // CRITICAL ORDERING: This is wrapped in an fp plugin registered AFTER
+  // @fastify/compress so it runs as the LAST onSend hook, after compression.
+  //
+  // Why this matters: direct app.addHook() calls execute immediately during
+  // buildApp(), while plugin hooks only register during app.ready(). Putting
+  // this inside an fp plugin ensures it initialises after compress (which was
+  // registered before this block), making it a true last-resort safety net.
+  await app.register(fp(async function onSendSafetyPlugin(instance) {
+    instance.addHook("onSend", async (request, reply, payload) => {
+      void reply.header("x-request-id", request.id);
+      const span = trace.getSpan(context.active());
+      if (span) {
+        span.setAttribute("http.status_code", reply.statusCode);
+      }
 
-    // Safety check: prevent empty responses for JSON endpoints
-    // Returns a valid response matching the standard { success, data } contract
-    const contentType = reply.getHeader("content-type");
-    if (
-      contentType &&
-      typeof contentType === "string" &&
-      contentType.includes("application/json") &&
-      reply.statusCode >= 200 &&
-      reply.statusCode < 300 &&
-      (payload === undefined || payload === null || payload === "")
-    ) {
-      request.log.warn(
-        {
-          url: request.url,
-          method: request.method,
-          statusCode: reply.statusCode,
-        },
-        "Empty JSON response detected - returning standard empty response",
-      );
-      return JSON.stringify({
-        success: true,
-        data: [],
-      });
-    }
+      // Safety check: prevent empty JSON responses on 2xx routes.
+      // Catches cases where @fastify/compress drops or empties the payload
+      // (e.g. when a compressed stream fails silently or Node.js zstd support
+      // causes negotiation to silently discard the body).
+      const contentType = reply.getHeader("content-type");
+      if (
+        contentType &&
+        typeof contentType === "string" &&
+        contentType.includes("application/json") &&
+        reply.statusCode >= 200 &&
+        reply.statusCode < 300 &&
+        (
+          payload === undefined ||
+          payload === null ||
+          payload === "" ||
+          (Buffer.isBuffer(payload) && payload.length === 0)
+        )
+      ) {
+        request.log.warn(
+          { url: request.url, method: request.method, statusCode: reply.statusCode },
+          "Empty JSON response detected — returning standard empty response",
+        );
+        return JSON.stringify({ success: true, data: [] });
+      }
 
-    return payload;
-  });
+      return payload;
+    });
+  }, { name: "onSend-safety", fastify: "5.x" }));
 
   // Phase 10: Global error handler — unhandled errors include requestId
   app.setErrorHandler<Error>((error, request, reply) => {
