@@ -8,6 +8,7 @@ import {
 } from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
 import type { EnrichedAttendanceSession } from "./attendance.repository.js";
+import { profileRepository } from "../profile/profile.repository.js";
 
 /**
  * Attendance service — business logic for check-in/check-out.
@@ -28,6 +29,10 @@ export const attendanceService = {
       { userId: request.user.sub, employeeId, organizationId: request.organizationId },
       "Employee checked in",
     );
+
+    // Update last_activity_at (fire-and-forget)
+    profileRepository.updateLastActivity(request, employeeId).catch(() => {});
+
     return attendanceRepository.createSession(request, employeeId);
   },
 

@@ -8,6 +8,7 @@ import type {
   CreateLocationBody,
   CreateLocationBatchBody,
 } from "./locations.schema.js";
+import { profileRepository } from "../profile/profile.repository.js";
 
 import { performance } from "perf_hooks";
 
@@ -43,6 +44,9 @@ export const locationsService = {
       body,
     );
     const latencyMs = Math.round(performance.now() - start);
+
+    // Update last_activity_at (fire-and-forget)
+    profileRepository.updateLastActivity(request, employeeId).catch(() => {});
 
     metrics.incrementLocationsInserted(1);
 
@@ -91,6 +95,9 @@ export const locationsService = {
     const duplicatesSuppressed = body.points.length - insertedCount;
 
     metrics.incrementLocationsInserted(insertedCount);
+
+    // Update last_activity_at (fire-and-forget — lightweight, no analytics tables touched)
+    profileRepository.updateLastActivity(request, employeeId).catch(() => {});
 
     request.log.info(
       {

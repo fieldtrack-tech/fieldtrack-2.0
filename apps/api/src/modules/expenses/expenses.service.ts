@@ -7,6 +7,9 @@ import type {
   UpdateExpenseStatusBody,
 } from "./expenses.schema.js";
 import type { EnrichedExpense } from "./expenses.repository.js";
+import { profileRepository } from "../profile/profile.repository.js";
+import { analyticsMetricsRepository } from "../analytics/analytics.metrics.repository.js";
+import { invalidateOrgAnalytics } from "../../utils/cache.js";
 
 /**
  * Expenses service — business rules for expense management.
@@ -41,6 +44,27 @@ export const expensesService = {
       employeeId,
       body,
     );
+
+    // Update last_activity_at (fire-and-forget)
+    profileRepository.updateLastActivity(request, employeeId).catch(() => {});
+
+    // UPSERT employee_daily_metrics + invalidate analytics cache (fire-and-forget)
+    const today = new Date().toISOString().substring(0, 10);
+    analyticsMetricsRepository
+      .upsertEmployeeDailyExpenseMetrics({
+        organizationId: request.organizationId,
+        employeeId,
+        date: today,
+        amountDelta: expense.amount,
+      })
+      .then(() => invalidateOrgAnalytics(request.organizationId))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        request.log.warn(
+          { expenseId: expense.id, employeeId, error: msg },
+          "Failed to update daily analytics after expense creation",
+        );
+      });
 
     request.log.info(
       {

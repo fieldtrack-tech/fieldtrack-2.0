@@ -10,6 +10,8 @@ import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import type { RecalculateResponse } from "./session_summary.schema.js";
 import type { TenantContext } from "../../utils/tenant.js";
 import { performance } from "perf_hooks";
+import { analyticsMetricsRepository } from "../analytics/analytics.metrics.repository.js";
+import { invalidateOrgAnalytics } from "../../utils/cache.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -232,6 +234,30 @@ export const sessionSummaryService = {
       })
       .eq("id", sessionId);
 
+    // 4c. UPSERT daily analytics metrics — fire-and-forget (non-critical path).
+    // The date is derived from checkin_at so the increment lands on the correct day.
+    const sessionDate = session.checkin_at.substring(0, 10);
+    Promise.all([
+      analyticsMetricsRepository.upsertEmployeeDailySessionMetrics({
+        organizationId: session.organization_id,
+        employeeId: session.employee_id,
+        date: sessionDate,
+        distanceDeltaKm: totalDistanceKm,
+        durationDeltaSeconds: durationSeconds,
+      }),
+      analyticsMetricsRepository.upsertOrgDailySessionMetrics({
+        organizationId: session.organization_id,
+        date: sessionDate,
+        distanceDeltaKm: totalDistanceKm,
+        durationDeltaSeconds: durationSeconds,
+      }),
+    ])
+      .then(() => invalidateOrgAnalytics(session.organization_id))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        request.log.warn({ sessionId, error: msg }, "Failed to update daily analytics after checkout");
+      });
+
     // 5. Update observability counters
     metrics.incrementRecalculations();
     metrics.recordRecalculationTime(executionTimeMs);
@@ -332,6 +358,34 @@ export const sessionSummaryService = {
         distance_recalculation_status: "done",
       })
       .eq("id", sessionId);
+
+    // 4c. UPSERT daily analytics metrics — fire-and-forget (non-critical path).
+    const sessionDate = (sessionData.checkin_at as string).substring(0, 10);
+    const sessionOrgId = sessionData.organization_id as string;
+    const sessionEmpId = sessionData.employee_id as string;
+    Promise.all([
+      analyticsMetricsRepository.upsertEmployeeDailySessionMetrics({
+        organizationId: sessionOrgId,
+        employeeId: sessionEmpId,
+        date: sessionDate,
+        distanceDeltaKm: totalDistanceKm,
+        durationDeltaSeconds: durationSeconds,
+      }),
+      analyticsMetricsRepository.upsertOrgDailySessionMetrics({
+        organizationId: sessionOrgId,
+        date: sessionDate,
+        distanceDeltaKm: totalDistanceKm,
+        durationDeltaSeconds: durationSeconds,
+      }),
+    ])
+      .then(() => invalidateOrgAnalytics(sessionOrgId))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        fastifyApp.log.warn(
+          { sessionId, error: msg },
+          "Worker: failed to update daily analytics after checkout",
+        );
+      });
 
     // 5. Update observability counters
     metrics.incrementRecalculations();
