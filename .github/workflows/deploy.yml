@@ -132,13 +132,26 @@ jobs:
             set -euo pipefail
             REPO_DIR="/home/ashish/FieldTrack-2.0"
             INFRA_DIR="$REPO_DIR/infra"
+            NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
+            ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
 
             # ── Nginx ──────────────────────────────────────────────────────────
             echo "=== Syncing Nginx config ==="
-            sudo cp /etc/nginx/sites-enabled/fieldtrack.conf \
-                    /etc/nginx/sites-enabled/fieldtrack.conf.bak 2>/dev/null || true
-            sudo cp "$INFRA_DIR/nginx/fieldtrack.conf" \
-                    /etc/nginx/sites-enabled/fieldtrack.conf
+            # Back up outside sites-enabled — nginx parses everything in that dir
+            sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
+
+            # Copy fresh config from repo (baseline always has blue port 3001)
+            sudo cp "$INFRA_DIR/nginx/fieldtrack.conf" "$NGINX_LIVE"
+
+            # Re-apply the current active slot so nginx keeps routing correctly
+            ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
+            if [ "$ACTIVE_SLOT" = "green" ]; then
+              sudo sed -i "s|server 127.0.0.1:3001;|server 127.0.0.1:3002;|" "$NGINX_LIVE"
+              echo "Active slot is green — patched upstream to port 3002."
+            else
+              echo "Active slot is blue — upstream port 3001 (default)."
+            fi
+
             sudo nginx -t
             sudo systemctl reload nginx
             echo "Nginx reloaded."
