@@ -23,12 +23,12 @@ const snapshotItemSchema = z.object({
   checkout_at: z.string().nullable(),
   total_distance_km: z.number().nullable(),
   total_duration_seconds: z.number().nullable(),
-  distance_recalculation_status: z.string(),
+  distance_recalculation_status: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
   employee_code: z.string().nullable().optional(),
   employee_name: z.string().nullable().optional(),
-  activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]).optional(),
+  activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]),
 });
 
 const paginationMetaSchema = z.object({

@@ -230,7 +230,7 @@ export const attendanceRepository = {
       checkout_at: row.checkout_at,
       total_distance_km: row.total_distance_km,
       total_duration_seconds: row.total_duration_seconds,
-      distance_recalculation_status: row.distance_recalculation_status,
+      distance_recalculation_status: (row.distance_recalculation_status as string | null) ?? null,
       created_at: row.updated_at, // snapshot table has no created_at; use updated_at
       updated_at: row.updated_at,
       employee_code: row.employee_code ?? null,
