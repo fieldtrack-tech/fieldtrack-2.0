@@ -29,12 +29,12 @@ export function useOrgSessions(page: number, limit: number) {
 }
 
 /**
- * Fetches ALL org sessions across all pages (limit=100 per page).
+ * Fetches ALL org sessions across all pages (limit=50 per page).
  * Auto-fetches subsequent pages until the entire dataset is loaded.
  * Returns a flat array of all sessions for client-side grouping.
  *
- * After the backend optimisation (get_org_latest_sessions RPC), each page
- * contains ONE row per employee, so the dataset converges in 1-2 calls.
+ * Backend now reads from employee_latest_sessions (one row per employee),
+ * so the dataset converges in 1–2 fetches for most organisations.
  */
 export function useAllOrgSessions() {
   const query = useInfiniteQuery<PaginatedResponse<AttendanceSession>, Error, AttendanceSession[], [string], number>({
@@ -42,7 +42,7 @@ export function useAllOrgSessions() {
     queryFn: ({ pageParam }) =>
       apiGetPaginated<AttendanceSession>(API.orgSessions, {
         page: String(pageParam),
-        limit: "100",
+        limit: "50",
       }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {

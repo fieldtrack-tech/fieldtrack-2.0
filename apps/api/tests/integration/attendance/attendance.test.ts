@@ -22,6 +22,8 @@ vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
     findSessionsByOrg: vi.fn(),
     findLatestSessionPerEmployee: vi.fn(),
     validateSessionActive: vi.fn(),
+    upsertLatestSession: vi.fn().mockResolvedValue(undefined),
+    updateLatestSessionDistance: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -105,6 +107,23 @@ describe("Attendance Integration Tests", () => {
       expect(body.data.id).toBe(TEST_SESSION_ID);
     });
 
+    it("calls upsertLatestSession after successful check-in", async () => {
+      vi.mocked(attendanceRepository.findOpenSession).mockResolvedValue(null);
+      vi.mocked(attendanceRepository.createSession).mockResolvedValue(openSession as never);
+
+      await app.inject({
+        method: "POST",
+        url: "/attendance/check-in",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+
+      expect(attendanceRepository.upsertLatestSession).toHaveBeenCalledWith(
+        TEST_ORG_ID,
+        TEST_EMPLOYEE_ID,
+        openSession,
+      );
+    });
+
     it("returns 400 with domain error when already checked in", async () => {
       vi.mocked(attendanceRepository.findOpenSession).mockResolvedValue(openSession as never);
 
@@ -156,6 +175,23 @@ describe("Attendance Integration Tests", () => {
       const body = JSON.parse(res.body) as { success: boolean; data: typeof closedSession };
       expect(body.success).toBe(true);
       expect(body.data.checkout_at).not.toBeNull();
+    });
+
+    it("calls upsertLatestSession after successful check-out", async () => {
+      vi.mocked(attendanceRepository.findOpenSession).mockResolvedValue(openSession as never);
+      vi.mocked(attendanceRepository.closeSession).mockResolvedValue(closedSession as never);
+
+      await app.inject({
+        method: "POST",
+        url: "/attendance/check-out",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+
+      expect(attendanceRepository.upsertLatestSession).toHaveBeenCalledWith(
+        TEST_ORG_ID,
+        TEST_EMPLOYEE_ID,
+        closedSession,
+      );
     });
 
     it("returns 400 when no open session exists", async () => {

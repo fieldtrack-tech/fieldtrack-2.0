@@ -190,8 +190,9 @@ export const attendanceRepository = {
 
   /**
    * Get the latest session per employee for the entire organization (admin view).
-   * Calls the `get_org_latest_sessions` DB function which uses DISTINCT ON for efficiency.
-   * Returns one row per employee, sorted by ACTIVE → RECENT → INACTIVE then checkin_at DESC.
+   * Reads from the employee_latest_sessions snapshot table — O(employees) instead
+   * of a window-function scan over all attendance_sessions rows.
+   * Sorting: ACTIVE (1) → RECENT (2) → INACTIVE (3), then newest updated_at first.
    */
   async findLatestSessionPerEmployee(
     request: FastifyRequest,
@@ -202,21 +203,27 @@ export const attendanceRepository = {
     const safeLimit = Math.min(100, Math.max(1, limit));
     const safeOffset = (Math.max(1, page) - 1) * safeLimit;
 
-    const { data, error } = await supabase.rpc("get_org_latest_sessions", {
-      p_org_id: request.organizationId,
-      p_status: status,
-      p_limit: safeLimit,
-      p_offset: safeOffset,
-    });
+    let query = supabase
+      .from("employee_latest_sessions")
+      .select("*", { count: "exact" })
+      .eq("organization_id", request.organizationId);
+
+    if (status !== "all") {
+      query = query.eq("status", status.toUpperCase());
+    }
+
+    const { data, error, count } = await query
+      .order("status_priority", { ascending: true })
+      .order("updated_at", { ascending: false })
+      .range(safeOffset, safeOffset + safeLimit - 1);
 
     if (error) {
       throw new Error(`Failed to fetch latest sessions per employee: ${error.message}`);
     }
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
     const mapped = rows.map((row) => ({
-      id: row.id,
+      id: row.session_id,
       employee_id: row.employee_id,
       organization_id: row.organization_id,
       checkin_at: row.checkin_at,
@@ -224,14 +231,65 @@ export const attendanceRepository = {
       total_distance_km: row.total_distance_km,
       total_duration_seconds: row.total_duration_seconds,
       distance_recalculation_status: row.distance_recalculation_status,
-      created_at: row.created_at,
+      created_at: row.updated_at, // snapshot table has no created_at; use updated_at
       updated_at: row.updated_at,
       employee_code: row.employee_code ?? null,
       employee_name: row.employee_name ?? null,
-      activityStatus: row.activity_status as ActivityStatus,
+      activityStatus: row.status as ActivityStatus,
     } as EnrichedAttendanceSession));
 
-    return { data: mapped, total };
+    return { data: mapped, total: count ?? 0 };
+  },
+
+  /**
+   * Upsert the employee_latest_sessions snapshot row for one employee.
+   * Called on check-in and check-out.  Delegates status/priority derivation
+   * and employee name lookup to the upsert_employee_latest_session DB function
+   * so that logic stays in one place.
+   * Fire-and-forget safe — caller may choose not to await.
+   */
+  async upsertLatestSession(
+    organizationId: string,
+    employeeId: string,
+    session: AttendanceSession,
+  ): Promise<void> {
+    const { error } = await supabase.rpc("upsert_employee_latest_session", {
+      p_session_id: session.id,
+      p_organization_id: organizationId,
+      p_employee_id: employeeId,
+      p_checkin_at: session.checkin_at,
+      p_checkout_at: session.checkout_at ?? null,
+      p_total_distance_km: session.total_distance_km ?? null,
+      p_total_duration_seconds: session.total_duration_seconds ?? null,
+      p_distance_recalculation_status: session.distance_recalculation_status ?? "pending",
+    });
+    if (error) {
+      throw new Error(`Failed to upsert latest session snapshot: ${error.message}`);
+    }
+  },
+
+  /**
+   * Update only the distance/duration columns on the snapshot row for a given
+   * session_id.  Called after distance recalculation completes.
+   * Fire-and-forget safe — caller may choose not to await.
+   */
+  async updateLatestSessionDistance(
+    sessionId: string,
+    totalDistanceKm: number,
+    totalDurationSeconds: number,
+  ): Promise<void> {
+    const { error } = await supabase
+      .from("employee_latest_sessions")
+      .update({
+        total_distance_km: totalDistanceKm,
+        total_duration_seconds: totalDurationSeconds,
+        distance_recalculation_status: "done",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("session_id", sessionId);
+    if (error) {
+      throw new Error(`Failed to update latest session distance snapshot: ${error.message}`);
+    }
   },
 
   /**

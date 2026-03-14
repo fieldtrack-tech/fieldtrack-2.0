@@ -33,7 +33,17 @@ export const attendanceService = {
     // Update last_activity_at (fire-and-forget)
     profileRepository.updateLastActivity(request, employeeId).catch(() => {});
 
-    return attendanceRepository.createSession(request, employeeId);
+    const session = await attendanceRepository.createSession(request, employeeId);
+
+    // Keep snapshot table in sync — fire-and-forget so check-in latency is unaffected
+    attendanceRepository
+      .upsertLatestSession(request.organizationId, employeeId, session)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        request.log.warn({ sessionId: session.id, error: msg }, "Failed to upsert latest session snapshot after check-in");
+      });
+
+    return session;
   },
 
   async checkOut(request: FastifyRequest): Promise<AttendanceSession> {
@@ -48,6 +58,14 @@ export const attendanceService = {
       "Employee checked out",
     );
     const closedSession = await attendanceRepository.closeSession(request, openSession.id);
+
+    // Keep snapshot table in sync — fire-and-forget so check-out latency is unaffected
+    attendanceRepository
+      .upsertLatestSession(request.organizationId, employeeId, closedSession)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        request.log.warn({ sessionId: closedSession.id, error: msg }, "Failed to upsert latest session snapshot after check-out");
+      });
 
     enqueueDistanceJob(closedSession.id).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);

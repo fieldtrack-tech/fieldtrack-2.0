@@ -234,6 +234,14 @@ export const sessionSummaryService = {
       })
       .eq("id", sessionId);
 
+    // Keep employee_latest_sessions snapshot in sync — fire-and-forget.
+    attendanceRepository
+      .updateLatestSessionDistance(sessionId, totalDistanceKm, durationSeconds)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        request.log.warn({ sessionId, error: msg }, "Failed to update latest session distance snapshot (HTTP path)");
+      });
+
     // 4c. UPSERT daily analytics metrics — fire-and-forget (non-critical path).
     // The date is derived from checkin_at so the increment lands on the correct day.
     const sessionDate = session.checkin_at.substring(0, 10);
@@ -358,6 +366,14 @@ export const sessionSummaryService = {
         distance_recalculation_status: "done",
       })
       .eq("id", sessionId);
+
+    // Keep employee_latest_sessions snapshot in sync — fire-and-forget.
+    attendanceRepository
+      .updateLatestSessionDistance(sessionId, totalDistanceKm, durationSeconds)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        fastifyApp.log.warn({ sessionId, error: msg }, "Worker: failed to update latest session distance snapshot");
+      });
 
     // 4c. UPSERT daily analytics metrics — fire-and-forget (non-critical path).
     const sessionDate = (sessionData.checkin_at as string).substring(0, 10);
