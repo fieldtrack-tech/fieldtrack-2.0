@@ -15,36 +15,6 @@ const adminSessionsQuerySchema = z.object({
   employee_id: z.string().uuid().optional(),
 });
 
-// ─── Response schema ─────────────────────────────────────────────────────────
-
-const snapshotItemSchema = z.object({
-  id: z.string().nullable(),
-  employee_id: z.string(),
-  organization_id: z.string(),
-  checkin_at: z.string(),
-  checkout_at: z.string().nullable(),
-  total_distance_km: z.number().nullable(),
-  total_duration_seconds: z.number().nullable(),
-  distance_recalculation_status: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  employee_code: z.string().nullable().optional(),
-  employee_name: z.string().nullable().optional(),
-  activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]),
-});
-
-const paginationMetaSchema = z.object({
-  page: z.number(),
-  limit: z.number(),
-  total: z.number(),
-});
-
-const snapshotListResponseSchema = z.object({
-  success: z.literal(true),
-  data: z.array(snapshotItemSchema),
-  pagination: paginationMetaSchema,
-});
-
 // ─── Route registration ───────────────────────────────────────────────────────
 
 /**
@@ -67,11 +37,6 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         querystring: adminSessionsQuerySchema,
-        response: {
-          200: snapshotListResponseSchema.describe(
-            "Latest session per employee (snapshot table)",
-          ),
-        },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
@@ -89,11 +54,7 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
           .status(200)
           .send(paginated(result.data, parsed.page, parsed.limit, result.total));
       } catch (error) {
-        // TEMP DEBUG: expose the actual error message
-        const msg = error instanceof Error ? error.message : String(error);
-        request.log.error({ err: error }, "admin/sessions handler error");
-        reply.status(500).send({ success: false, error: msg, requestId: request.id });
-        return;
+        handleError(error, request, reply, "Unexpected error fetching admin sessions");
       }
     },
   );

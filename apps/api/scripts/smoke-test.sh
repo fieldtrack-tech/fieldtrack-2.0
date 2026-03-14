@@ -223,7 +223,31 @@ STATUS=$(request GET "/admin/org-summary" "$ADMIN_TOKEN")
 if validate_api_response "GET /admin/org-summary (admin)" && [ "$STATUS" = "200" ]; then
   log_pass "Admin access /admin/org-summary"
 else
-  log_fail "Admin access invalid or failed ($STATUS)"
+  log_fail "Admin access /admin/org-summary invalid or failed ($STATUS)"
+fi
+
+STATUS=$(request GET "/admin/sessions?page=1&limit=2" "$ADMIN_TOKEN")
+
+if validate_api_response "GET /admin/sessions (admin)" && [ "$STATUS" = "200" ]; then
+  log_pass "Admin access /admin/sessions"
+else
+  log_fail "Admin access /admin/sessions invalid or failed ($STATUS) $(cat "$TMP_BODY")"
+fi
+
+STATUS=$(request GET "/admin/expenses?page=1&limit=2" "$ADMIN_TOKEN")
+
+if validate_api_response "GET /admin/expenses (admin)" && [ "$STATUS" = "200" ]; then
+  log_pass "Admin access /admin/expenses"
+else
+  log_fail "Admin access /admin/expenses invalid or failed ($STATUS) $(cat "$TMP_BODY")"
+fi
+
+STATUS=$(request GET "/admin/dashboard" "$ADMIN_TOKEN")
+
+if validate_api_response "GET /admin/dashboard (admin)" && [ "$STATUS" = "200" ]; then
+  log_pass "Admin access /admin/dashboard"
+else
+  log_fail "Admin access /admin/dashboard invalid or failed ($STATUS) $(cat "$TMP_BODY")"
 fi
 
 # ------------------------------------------------

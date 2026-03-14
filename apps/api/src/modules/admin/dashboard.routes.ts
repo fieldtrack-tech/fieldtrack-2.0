@@ -1,26 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
 import { expensesRepository } from "../expenses/expenses.repository.js";
 import type { AdminDashboardData } from "@fieldtrack/types";
-
-// ─── Response schema ─────────────────────────────────────────────────────────
-
-const adminDashboardResponseSchema = z.object({
-  success: z.literal(true),
-  data: z.object({
-    activeEmployeeCount: z.number(),
-    recentEmployeeCount: z.number(),
-    inactiveEmployeeCount: z.number(),
-    todaySessionCount: z.number(),
-    todayDistanceKm: z.number(),
-    pendingExpenseCount: z.number(),
-    pendingExpenseAmount: z.number(),
-  }),
-});
 
 // ─── Route registration ───────────────────────────────────────────────────────
 
@@ -43,9 +27,6 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
     {
       schema: {
         tags: ["admin"],
-        response: {
-          200: adminDashboardResponseSchema.describe("Admin dashboard aggregation"),
-        },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

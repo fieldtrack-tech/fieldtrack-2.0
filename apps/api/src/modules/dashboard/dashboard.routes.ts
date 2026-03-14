@@ -1,18 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { dashboardController } from "./dashboard.controller.js";
-
-const dashboardSummaryResponseSchema = z.object({
-  success: z.literal(true),
-  data: z.object({
-    sessionsThisWeek: z.number(),
-    distanceThisWeek: z.number(),
-    hoursThisWeek: z.number(),
-    expensesSubmitted: z.number(),
-    expensesApproved: z.number(),
-  }),
-});
 
 /**
  * Dashboard routes — available to any authenticated user.
@@ -24,7 +12,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/dashboard/my-summary",
     {
-      schema: { tags: ["dashboard"], response: { 200: dashboardSummaryResponseSchema.describe("Personal dashboard summary for the current week") } },
+      schema: { tags: ["dashboard"] },
       preValidation: [authenticate],
     },
     dashboardController.getMySummary,

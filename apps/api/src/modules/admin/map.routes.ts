@@ -1,28 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
 import type { EmployeeMapMarker } from "@fieldtrack/types";
-
-// ─── Response schema ──────────────────────────────────────────────────────────
-
-const mapMarkerSchema = z.object({
-  employeeId: z.string(),
-  employeeName: z.string(),
-  employeeCode: z.string().nullable(),
-  status: z.enum(["ACTIVE", "RECENT", "INACTIVE"]),
-  sessionId: z.string().nullable(),
-  latitude: z.number(),
-  longitude: z.number(),
-  recordedAt: z.string(),
-});
-
-const mapResponseSchema = z.object({
-  success: z.literal(true),
-  data: z.array(mapMarkerSchema),
-});
 
 // ─── Route registration ───────────────────────────────────────────────────────
 
@@ -50,11 +31,6 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
-        response: {
-          200: mapResponseSchema.describe(
-            "Latest GPS position per employee for map rendering",
-          ),
-        },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
