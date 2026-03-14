@@ -150,7 +150,7 @@ export const expensesRepository = {
     // We group in application code to avoid a raw SQL RPC; the expense
     // table is orders of magnitude smaller than attendance_sessions.
     const { data, error } = await orgTable(request, "expenses")
-      .select(`id, employee_id, amount, status, submitted_at, ${EXPENSE_ENRICHED_COLS}`, { count: "exact" })
+      .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
       .order("submitted_at", { ascending: false })
       .limit(5000); // safety cap — grouping happens in JS below
 
