@@ -1,19 +1,18 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { AttendanceSession } from "@fieldtrack/types";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
 import { paginationSchema, orgSessionsQuerySchema } from "./attendance.schema.js";
 
-const sessionItemSchema: z.ZodType<AttendanceSession> = z.object({
-  id: z.string(),
+const sessionItemSchema = z.object({
+  id: z.string().nullable(),
   employee_id: z.string(),
   organization_id: z.string(),
   checkin_at: z.string(),
   checkout_at: z.string().nullable(),
-  distance_recalculation_status: z.string(),
+  distance_recalculation_status: z.string().nullable(),
   total_distance_km: z.number().nullable(),
   total_duration_seconds: z.number().nullable(),
   created_at: z.string(),

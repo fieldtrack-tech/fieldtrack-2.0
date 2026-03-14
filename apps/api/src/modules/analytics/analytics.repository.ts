@@ -1,4 +1,5 @@
 import { orgTable } from "../../db/query.js";
+import { supabaseServiceClient } from "../../config/supabase.js";
 import type { FastifyRequest } from "fastify";
 import type {
   MinimalSessionRow,
@@ -143,17 +144,20 @@ export const analyticsRepository = {
   },
 
   /**
-   * Count all active employees in the requesting org.
+   * Count employees currently checked in (ACTIVE status in the snapshot table).
    *
    * Uses a HEAD request (no row data returned) so Postgres only executes
    * a COUNT — far cheaper than fetching rows and measuring .length.
    *
-   * Relies on index: employees(organization_id)
+   * employee_latest_sessions.status = 'ACTIVE' means "checked in within last
+   * 2 hours" — distinct from employees.is_active which means "account enabled".
    */
   async getActiveEmployeesCount(request: FastifyRequest): Promise<number> {
-    const result = await orgTable(request, "employees")
-      .select("id", { count: "exact", head: true })
-      .eq("is_active", true);
+    const result = await supabaseServiceClient
+      .from("employee_latest_sessions")
+      .select("employee_id", { count: "exact", head: true })
+      .eq("organization_id", request.organizationId)
+      .eq("status", "ACTIVE");
 
     if (result.error) {
       throw new Error(

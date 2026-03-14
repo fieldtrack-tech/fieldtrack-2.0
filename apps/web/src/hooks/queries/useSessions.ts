@@ -21,7 +21,7 @@ export function useOrgSessions(page: number, limit: number) {
   return useQuery<PaginatedResponse<AttendanceSession>>({
     queryKey: ["orgSessions", page, limit],
     queryFn: () =>
-      apiGetPaginated<AttendanceSession>(API.orgSessions, {
+      apiGetPaginated<AttendanceSession>(API.adminSessions, {
         page: String(page),
         limit: String(limit),
       }),
