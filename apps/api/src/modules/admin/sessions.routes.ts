@@ -3,7 +3,7 @@ import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceService } from "../attendance/attendance.service.js";
-import { handleError, paginated } from "../../utils/response.js";
+import { paginated } from "../../utils/response.js";
 
 // ─── Query schema ─────────────────────────────────────────────────────────────
 
@@ -85,11 +85,14 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
           parsed.status,
           parsed.employee_id,
         );
-        reply
-          .status(200)
-          .send(paginated(result.data, parsed.page, parsed.limit, result.total));
+        const payload = paginated(result.data, parsed.page, parsed.limit, result.total);
+        // Bypass Zod serializer: serialize manually
+        void (reply as any).status(200).header("content-type", "application/json").serializer(JSON.stringify).send(payload);
       } catch (error) {
-        handleError(error, request, reply, "Unexpected error fetching admin sessions");
+        // Temporary debug: include actual error message
+        const msg = error instanceof Error ? error.message : String(error);
+        request.log.error({ err: error }, "admin/sessions handler error");
+        void (reply as any).status(500).header("content-type", "application/json").serializer(JSON.stringify).send({ success: false, error: msg, requestId: request.id });
       }
     },
   );
