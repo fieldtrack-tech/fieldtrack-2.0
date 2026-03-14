@@ -37,15 +37,28 @@ request() {
   METHOD=$1
   URL=$2
   TOKEN=${3:-}
+  MAX_RETRIES=3
 
-  if [ -n "$TOKEN" ]; then
-    STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
-      -H "Authorization: Bearer $TOKEN" \
-      -X "$METHOD" "$API$URL")
-  else
-    STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
-      -X "$METHOD" "$API$URL")
-  fi
+  for attempt in $(seq 1 $MAX_RETRIES); do
+    if [ -n "$TOKEN" ]; then
+      STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
+        -H "Authorization: Bearer $TOKEN" \
+        -X "$METHOD" "$API$URL")
+    else
+      STATUS=$(curl -L -s -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
+        -X "$METHOD" "$API$URL")
+    fi
+
+    # Retry on transient gateway errors (502/503/504) from nginx during deploy
+    if [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ]; then
+      if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+        echo "  ↻ $METHOD $URL returned $STATUS, retrying ($attempt/$MAX_RETRIES)..." >&2
+        sleep 3
+        continue
+      fi
+    fi
+    break
+  done
 
   echo "$STATUS"
 }
