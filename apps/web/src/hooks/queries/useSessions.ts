@@ -42,7 +42,7 @@ export function useAllOrgSessions() {
     queryFn: ({ pageParam }) =>
       apiGetPaginated<AttendanceSession>(API.adminSessions, {
         page: String(pageParam),
-        limit: "50",
+        limit: "1000",
       }),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
@@ -62,7 +62,7 @@ export function useAllOrgSessions() {
 
   return {
     data: query.data ?? [],
-    isLoading: query.isLoading || query.hasNextPage === true,
+    isLoading: query.isLoading,
     error: query.error,
     refetch: query.refetch,
   };

@@ -259,10 +259,10 @@ describe("GET /admin/sessions", () => {
 
   // ─── Limit guard ─────────────────────────────────────────────────────────────
 
-  it("rejects ?limit above 100", async () => {
+  it("rejects ?limit above 1000", async () => {
     const res = await app.inject({
       method: "GET",
-      url: "/admin/sessions?limit=200",
+      url: "/admin/sessions?limit=1500",
       headers: { authorization: `Bearer ${adminToken}` },
     });
 

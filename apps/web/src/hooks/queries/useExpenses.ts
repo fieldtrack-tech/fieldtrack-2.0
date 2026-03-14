@@ -46,7 +46,7 @@ export function useAllOrgExpenses() {
     queryFn: ({ pageParam }) =>
       apiGetPaginated<Expense>(API.orgExpenses, {
         page: String(pageParam),
-        limit: "100",
+        limit: "1000",
       }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {
@@ -64,7 +64,7 @@ export function useAllOrgExpenses() {
 
   return {
     data: query.data ?? [],
-    isLoading: query.isLoading || query.hasNextPage === true,
+    isLoading: query.isLoading,
     error: query.error,
     refetch: query.refetch,
   };

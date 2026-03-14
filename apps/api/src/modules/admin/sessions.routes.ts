@@ -9,7 +9,7 @@ import { handleError, paginated } from "../../utils/response.js";
 
 const adminSessionsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(1000).default(50),
   status: z.enum(["all", "active", "recent", "inactive"]).default("all"),
   /** Filter by employee UUID — returns full attendance_sessions history for that employee. */
   employee_id: z.string().uuid().optional(),

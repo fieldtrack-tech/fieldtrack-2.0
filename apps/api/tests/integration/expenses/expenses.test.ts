@@ -287,10 +287,10 @@ describe("Expenses Integration Tests", () => {
       );
     });
 
-    it("returns 400 for limit above 100", async () => {
+    it("returns 400 for limit above 1000", async () => {
       const res = await app.inject({
         method: "GET",
-        url: "/expenses/my?limit=999",
+        url: "/expenses/my?limit=1500",
         headers: { authorization: `Bearer ${employeeToken}` },
       });
       expect(res.statusCode).toBe(400);
