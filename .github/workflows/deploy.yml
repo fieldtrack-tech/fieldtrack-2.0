@@ -286,10 +286,13 @@ jobs:
             # Only restarts Prometheus / Grafana / Loki stack when configs change,
             # preventing unnecessary restarts on code-only deploys.
             echo "=== Checking monitoring config hash ==="
-            CURRENT_HASH=$(find "$INFRA_DIR" \
+            # -readable: skip files not readable by the deploy user (e.g. root-owned docker volume files)
+            # -r / --no-run-if-empty: don't invoke sha256sum if find produced no output
+            # || echo "changed": if the pipeline still fails for any reason, default to restarting
+            CURRENT_HASH=$(find "$INFRA_DIR" -readable \
               \( -name "*.yml" -o -name "*.yaml" -o -name "*.conf" -o -name "*.toml" -o -name "*.json" \) \
               -not -path "$INFRA_DIR/nginx/*" \
-              | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+              | sort | xargs -r sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "changed")
             STORED_HASH=$(cat "$INFRA_HASH_FILE" 2>/dev/null || echo "")
 
             if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
