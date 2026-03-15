@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
+import { analyticsService } from "../analytics/analytics.service.js";
 import type { AdminDashboardData } from "@fieldtrack/types";
 
 // ─── Route registration ───────────────────────────────────────────────────────
@@ -36,7 +37,13 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         todayStart.setUTCHours(0, 0, 0, 0);
         const todayStartISO = todayStart.toISOString();
 
-        const [activeCountResult, recentCountResult, totalCountResult, todayResult, pendingExpensesResult] = await Promise.all([
+        // Date ranges for the embedded analytics snapshots
+        const sevenDaysAgo = new Date(todayStart);
+        sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
+        const thirtyDaysAgo = new Date(todayStart);
+        thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
+
+        const [activeCountResult, recentCountResult, totalCountResult, todayResult, pendingExpensesResult, sessionTrend, leaderboard] = await Promise.all([
           // Count-only queries — head:true means no row data is transferred, only the count.
           // This is O(employees) via the snapshot index and correct for any org size.
           supabase
@@ -70,6 +77,12 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
             .select("amount")
             .eq("organization_id", orgId)
             .eq("status", "PENDING"),
+
+          // Session trend — last 7 days from org_daily_metrics (cached 5 min).
+          analyticsService.getSessionTrend(request, sevenDaysAgo.toISOString(), undefined),
+
+          // Leaderboard — top 5 by distance over the last 30 days (cached 5 min).
+          analyticsService.getLeaderboard(request, "distance", thirtyDaysAgo.toISOString(), undefined, 5),
         ]);
 
         const snapshotError = activeCountResult.error ?? recentCountResult.error ?? totalCountResult.error;
@@ -110,6 +123,8 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
           todayDistanceKm,
           pendingExpenseCount,
           pendingExpenseAmount,
+          sessionTrend,
+          leaderboard,
         };
 
         reply.status(200).send(ok(result));

@@ -210,6 +210,10 @@ export interface AdminDashboardData {
   todayDistanceKm: number;
   pendingExpenseCount: number;
   pendingExpenseAmount: number;
+  /** Daily session trend for the last 7 days (from org_daily_metrics). */
+  sessionTrend: SessionTrendEntry[];
+  /** Top-5 employees ranked by distance over the last 30 days (from employee_daily_metrics). */
+  leaderboard: LeaderboardEntry[];
 }
 
 /**

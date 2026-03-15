@@ -17,6 +17,16 @@ vi.mock("../../../src/config/supabase.js", () => ({
   supabaseServiceClient: { from: vi.fn() },
 }));
 
+// Stub the analytics service so the dashboard test does not hit Redis.
+// The dashboard correctly embeds sessionTrend + leaderboard; these stubs
+// keep the test fast and focused on the dashboard's own aggregation logic.
+vi.mock("../../../src/modules/analytics/analytics.service.js", () => ({
+  analyticsService: {
+    getSessionTrend: vi.fn().mockResolvedValue([]),
+    getLeaderboard: vi.fn().mockResolvedValue([]),
+  },
+}));
+
 import {
   buildTestApp,
   signEmployeeToken,
@@ -99,6 +109,8 @@ function mockDashboardSupabase(
     if (table === "expenses") {
       return makeChainBuilder({ data: PENDING_EXPENSES, error: null });
     }
+    // org_daily_metrics (session trend) and employee_daily_metrics / employees
+    // (leaderboard) — return empty arrays so analytics snapshots are [] by default.
     return makeChainBuilder({ data: [], error: null });
   });
 }
@@ -161,6 +173,8 @@ describe("GET /admin/dashboard", () => {
         todayDistanceKm: number;
         pendingExpenseCount: number;
         pendingExpenseAmount: number;
+        sessionTrend: unknown[];
+        leaderboard: unknown[];
       };
     }>();
 
@@ -172,6 +186,8 @@ describe("GET /admin/dashboard", () => {
     expect(body.data.todayDistanceKm).toBe(19.8);
     expect(body.data.pendingExpenseCount).toBe(3);
     expect(body.data.pendingExpenseAmount).toBe(225.0);
+    expect(Array.isArray(body.data.sessionTrend)).toBe(true);
+    expect(Array.isArray(body.data.leaderboard)).toBe(true);
   });
 
   it("returns zero counts when org has no data", async () => {
