@@ -7,19 +7,14 @@ vi.mock("../../../src/config/redis.js", () => ({
   redisClient: { on: vi.fn(), quit: vi.fn(), disconnect: vi.fn() },
 }));
 
-// Phase 22: Dashboard route now uses getCached() and deduped().
-// Both are mocked here so tests are not affected by Redis connection retries.
+// Phase 22/24: Dashboard route uses getCached(). Mock it to call fn() directly
+// so tests never attempt a Redis connection.
 vi.mock("../../../src/utils/cache.js", () => ({
   getCached: vi.fn().mockImplementation(
     (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn(),
   ),
   invalidateOrgAnalytics: vi.fn().mockResolvedValue(undefined),
   ANALYTICS_CACHE_TTL: 300,
-}));
-vi.mock("../../../src/utils/dedup.js", () => ({
-  deduped: vi.fn().mockImplementation(
-    (_key: string, fn: () => Promise<unknown>) => fn(),
-  ),
 }));
 
 vi.mock("../../../src/workers/distance.queue.js", () => ({
@@ -30,19 +25,16 @@ vi.mock("../../../src/workers/analytics.queue.js", () => ({
   enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
 }));
 
-// The dashboard route calls supabaseServiceClient.from() directly for
-// employee_latest_sessions, attendance_sessions, and expenses queries.
+// Phase 24: Dashboard route now calls supabaseServiceClient.from("org_dashboard_snapshot").
 vi.mock("../../../src/config/supabase.js", () => ({
   supabaseServiceClient: { from: vi.fn() },
 }));
 
 // Stub the analytics service so the dashboard test does not hit Redis.
-// The dashboard correctly embeds sessionTrend + leaderboard; these stubs
-// keep the test fast and focused on the dashboard's own aggregation logic.
 vi.mock("../../../src/modules/analytics/analytics.service.js", () => ({
   analyticsService: {
     getSessionTrend: vi.fn().mockResolvedValue([]),
-    getLeaderboard: vi.fn().mockResolvedValue([]),
+    getLeaderboard:  vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -50,31 +42,13 @@ import {
   buildTestApp,
   signEmployeeToken,
   signAdminToken,
-  TEST_ORG_ID,
 } from "../../setup/test-server.js";
 import { supabaseServiceClient as supabase } from "../../../src/config/supabase.js";
 
 // ─── Supabase query builder factory ──────────────────────────────────────────
 
 /** Build a mock Supabase chainable query builder that resolves to `result`. */
-function makeBuilder(result: { data: unknown; error: null | { message: string }; count?: number | null }) {
-  const b = {
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    gte: vi.fn().mockReturnThis(),
-    in: vi.fn().mockReturnThis(),
-    order: vi.fn().mockReturnThis(),
-    range: vi.fn().mockReturnThis(),
-    then: (_resolve: (v: unknown) => void): Promise<unknown> =>
-      Promise.resolve(result).then(_resolve),
-  };
-  // Make the builder itself a thenable so `await builder.eq(...)` works
-  Object.defineProperty(b, Symbol.toStringTag, { value: "Promise" });
-  return b;
-}
-
-/** Returns a builder whose final `await` resolves to `result` */
-function makeChainBuilder(result: { data: unknown; error: null | { message: string }; count?: number }) {
+function makeChainBuilder(result: { data: unknown; error: null | { message: string }; count?: number | null }) {
   const chain: Record<string, unknown> = {};
   const methods = ["select", "eq", "gte", "in", "order", "range", "limit"];
   for (const m of methods) {
@@ -83,54 +57,36 @@ function makeChainBuilder(result: { data: unknown; error: null | { message: stri
   // Make it awaitable (for direct-await usage)
   (chain as { then: (r: (v: unknown) => void) => Promise<unknown> }).then = (resolve) =>
     Promise.resolve(result).then(resolve);
-  // Support .maybeSingle() terminal call (used by org_daily_metrics today query)
+  // Support .maybeSingle() terminal call (used by org_dashboard_snapshot)
   (chain as { maybeSingle: () => Promise<unknown> }).maybeSingle = () =>
     Promise.resolve(result);
-  return chain as ReturnType<typeof makeBuilder>;
+  return chain as ReturnType<typeof makeChainBuilder>;
 }
 
 // ─── Default fixture data ─────────────────────────────────────────────────────
 
-// Phase 21: today stats come from org_daily_metrics (not attendance_sessions scan)
-const TODAY_METRICS = { total_sessions: 2, total_distance_km: 19.8 };
-
-// Three pending expense rows totalling 225.00
-const PENDING_EXPENSES = [
-  { amount: 100 },
-  { amount: 75 },
-  { amount: 50 },
-];
+// Phase 24: dashboard reads a single row from org_dashboard_snapshot.
+const DEFAULT_SNAPSHOT = {
+  active_employee_count:   2,
+  recent_employee_count:   1,
+  inactive_employee_count: 1,
+  active_employees_today:  2,
+  today_session_count:     2,
+  today_distance_km:       19.8,
+  pending_expense_count:   3,
+  pending_expense_amount:  225.0,
+};
 
 // ─── Helper: set up supabase.from mock for one test ──────────────────────────
 
-/**
- * The dashboard now issues three count-only queries to employee_latest_sessions
- * (ACTIVE, RECENT, total) plus one maybeSingle to org_daily_metrics for today.
- * We use a call-index counter so each sequential snapshot call returns the right count.
- */
-let snapshotCallIndex = 0;
-
 function mockDashboardSupabase(
-  activeCnt = 2,
-  recentCnt = 1,
-  totalCnt = 4,
+  snapData: typeof DEFAULT_SNAPSHOT | null = DEFAULT_SNAPSHOT,
+  snapError: { message: string } | null = null,
 ): void {
-  snapshotCallIndex = 0;
   vi.mocked(supabase.from).mockImplementation((table: string) => {
-    if (table === "employee_latest_sessions") {
-      const idx = snapshotCallIndex++;
-      if (idx === 0) return makeChainBuilder({ data: null, error: null, count: activeCnt });
-      if (idx === 1) return makeChainBuilder({ data: null, error: null, count: recentCnt });
-      return makeChainBuilder({ data: null, error: null, count: totalCnt });
+    if (table === "org_dashboard_snapshot") {
+      return makeChainBuilder({ data: snapData, error: snapError });
     }
-    // Phase 21: today's session + distance stats come from org_daily_metrics (.maybeSingle)
-    if (table === "org_daily_metrics") {
-      return makeChainBuilder({ data: TODAY_METRICS, error: null });
-    }
-    if (table === "expenses") {
-      return makeChainBuilder({ data: PENDING_EXPENSES, error: null });
-    }
-    // employee_daily_metrics / employees (leaderboard) — empty by default.
     return makeChainBuilder({ data: [], error: null });
   });
 }
@@ -175,7 +131,7 @@ describe("GET /admin/dashboard", () => {
 
   // ─── Happy path ───────────────────────────────────────────────────────────
 
-  it("returns 200 with aggregated dashboard data", async () => {
+  it("returns 200 with aggregated dashboard data from snapshot", async () => {
     const res = await app.inject({
       method: "GET",
       url: "/admin/dashboard",
@@ -186,15 +142,16 @@ describe("GET /admin/dashboard", () => {
     const body = res.json<{
       success: boolean;
       data: {
-        activeEmployeeCount: number;
-        recentEmployeeCount: number;
+        activeEmployeeCount:   number;
+        recentEmployeeCount:   number;
         inactiveEmployeeCount: number;
-        todaySessionCount: number;
-        todayDistanceKm: number;
-        pendingExpenseCount: number;
-        pendingExpenseAmount: number;
-        sessionTrend: unknown[];
-        leaderboard: unknown[];
+        activeEmployeesToday:  number;
+        todaySessionCount:     number;
+        todayDistanceKm:       number;
+        pendingExpenseCount:   number;
+        pendingExpenseAmount:  number;
+        sessionTrend:  unknown[];
+        leaderboard:   unknown[];
       };
     }>();
 
@@ -202,6 +159,7 @@ describe("GET /admin/dashboard", () => {
     expect(body.data.activeEmployeeCount).toBe(2);
     expect(body.data.recentEmployeeCount).toBe(1);
     expect(body.data.inactiveEmployeeCount).toBe(1);
+    expect(body.data.activeEmployeesToday).toBe(2);
     expect(body.data.todaySessionCount).toBe(2);
     expect(body.data.todayDistanceKm).toBe(19.8);
     expect(body.data.pendingExpenseCount).toBe(3);
@@ -210,10 +168,9 @@ describe("GET /admin/dashboard", () => {
     expect(Array.isArray(body.data.leaderboard)).toBe(true);
   });
 
-  it("returns zero counts when org has no data", async () => {
-    vi.mocked(supabase.from).mockImplementation(() =>
-      makeChainBuilder({ data: [], error: null }),
-    );
+  it("returns zero counts when org has no snapshot yet (null row)", async () => {
+    // No snapshot row exists → maybeSingle returns null data — dashboard returns zeros.
+    mockDashboardSupabase(null);
 
     const res = await app.inject({
       method: "GET",
@@ -222,18 +179,16 @@ describe("GET /admin/dashboard", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const body = res.json<{ data: { activeEmployeeCount: number; todaySessionCount: number } }>();
+    const body = res.json<{
+      data: { activeEmployeeCount: number; todaySessionCount: number; pendingExpenseCount: number };
+    }>();
     expect(body.data.activeEmployeeCount).toBe(0);
     expect(body.data.todaySessionCount).toBe(0);
+    expect(body.data.pendingExpenseCount).toBe(0);
   });
 
   it("returns 500 when the snapshot query fails", async () => {
-    vi.mocked(supabase.from).mockImplementation((table: string) => {
-      if (table === "employee_latest_sessions") {
-        return makeChainBuilder({ data: null, error: { message: "connection timeout" } });
-      }
-      return makeChainBuilder({ data: [], error: null });
-    });
+    mockDashboardSupabase(null, { message: "connection timeout" });
 
     const res = await app.inject({
       method: "GET",
@@ -244,18 +199,18 @@ describe("GET /admin/dashboard", () => {
     expect(res.statusCode).toBe(500);
   });
 
-  it("scopes query to requesting org ID", async () => {
+  it("queries org_dashboard_snapshot (single O(1) lookup)", async () => {
     await app.inject({
       method: "GET",
       url: "/admin/dashboard",
       headers: { authorization: `Bearer ${adminToken}` },
     });
 
-    // Verify each data source is queried (scoping via .eq("organization_id", ...) is
-    // enforced by the route handler for every table).
-    expect(supabase.from).toHaveBeenCalledWith("employee_latest_sessions");
-    // Phase 21: today's stats come from org_daily_metrics, not attendance_sessions
-    expect(supabase.from).toHaveBeenCalledWith("org_daily_metrics");
-    expect(supabase.from).toHaveBeenCalledWith("expenses");
+    // Phase 24: only one table should be queried for the dashboard metrics.
+    expect(supabase.from).toHaveBeenCalledWith("org_dashboard_snapshot");
+    // Verify legacy multi-query tables are no longer called directly by the route.
+    expect(supabase.from).not.toHaveBeenCalledWith("employee_latest_sessions");
+    expect(supabase.from).not.toHaveBeenCalledWith("org_daily_metrics");
+    expect(supabase.from).not.toHaveBeenCalledWith("expenses");
   });
 });

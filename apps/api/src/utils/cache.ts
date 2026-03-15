@@ -72,12 +72,18 @@ export const ANALYTICS_CACHE_TTL = 300;
  * server is never blocked on a large keyspace. Non-fatal: errors are swallowed
  * so a Redis outage never prevents checkout or expense creation from completing.
  *
+ * Also explicitly deletes the `org:{orgId}:dashboard` key written by the
+ * Phase 24 single-query dashboard route (different prefix, not covered by the
+ * analytics SCAN pattern).
+ *
  * Call this after:
  *  - Session checkout (distance worker completion)
  *  - Expense submission
  */
 export async function invalidateOrgAnalytics(orgId: string): Promise<void> {
   try {
+    // 1. Pattern sweep: clears trend, leaderboard, summary, and any other
+    //    analytics keys stored under org:{orgId}:analytics:*.
     const pattern = `org:${orgId}:analytics:*`;
     let cursor = "0";
     do {
@@ -93,6 +99,9 @@ export async function invalidateOrgAnalytics(orgId: string): Promise<void> {
         await cacheClient.del(...keys);
       }
     } while (cursor !== "0");
+
+    // 2. Explicit delete: Phase 24 dashboard snapshot cache key.
+    await cacheClient.del(`org:${orgId}:dashboard`);
   } catch {
     // Non-fatal — Redis outage must not block business operations
   }

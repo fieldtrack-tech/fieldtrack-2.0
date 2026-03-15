@@ -5,28 +5,42 @@ import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
 import { analyticsService } from "../analytics/analytics.service.js";
 import { getCached } from "../../utils/cache.js";
-import { deduped } from "../../utils/dedup.js";
 import type { AdminDashboardData } from "@fieldtrack/types";
 
-// Phase 22: 60-second TTL for the dashboard aggregate response.
-// Short enough that status counts (ACTIVE/RECENT) stay fresh;
-// long enough to absorb repeated polling from the frontend.
+// Phase 24: Simplified TTL — the snapshot is always current within a worker
+// cycle (~seconds), so Redis just absorbs repeated polling load.
 const DASHBOARD_CACHE_TTL = 60;
+
+// Shape of a row returned from org_dashboard_snapshot.
+interface DashboardSnapshot {
+  active_employee_count: number;
+  recent_employee_count: number;
+  inactive_employee_count: number;
+  active_employees_today: number;
+  today_session_count: number;
+  today_distance_km: number;
+  pending_expense_count: number;
+  pending_expense_amount: number;
+}
 
 // ─── Route registration ───────────────────────────────────────────────────────
 
 /**
  * GET /admin/dashboard
  *
- * Single aggregation endpoint that collapses what previously required 4-5
- * separate frontend calls into one round-trip.
+ * Phase 24: O(1) database access.
  *
- * Data sources:
- *  - employee_latest_sessions  → status counts (O(employees), snapshot table)
- *  - attendance_sessions       → today's session + distance totals (date-scoped)
- *  - expenses                  → pending count + amount (org-scoped)
+ * Hot path (cache hit): zero DB queries — serve from Redis in < 1 ms.
  *
- * All three queries run in parallel via Promise.all.
+ * Cold path (cache miss):
+ *   1. ONE indexed primary-key lookup → org_dashboard_snapshot
+ *   2. Session trend  (separate Redis cache, 5-min TTL)
+ *   3. Leaderboard    (separate Redis cache, 5-min TTL)
+ *
+ * The snapshot is kept current by the analytics worker, which upserts a row
+ * after every session checkout.  The Redis layer (60 s) absorbs high-frequency
+ * polling.  Cache invalidation is handled by invalidateOrgAnalytics() which now
+ * also clears the `org:{id}:dashboard` key.
  */
 export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -41,100 +55,65 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
       try {
         const orgId = request.organizationId;
         const todayDateStr = new Date().toISOString().substring(0, 10);
+        const sevenDaysAgo = new Date(`${todayDateStr}T00:00:00Z`);
+        sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
+        const thirtyDaysAgo = new Date(`${todayDateStr}T00:00:00Z`);
+        thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
 
-        // Phase 22: Two-layer optimisation:
-        //  1. deduped() — collapses concurrent cache-miss requests into one DB fetch.
-        //  2. getCached() — serves subsequent requests from Redis for 60 s.
-        // The cache key pattern (org:{id}:analytics:*) is covered by
-        // invalidateOrgAnalytics(), so fresh data appears within 60 s of checkout.
-        const result = await deduped(
-          `dashboard:${orgId}:${todayDateStr}`,
-          () =>
-            getCached<AdminDashboardData>(
-              `org:${orgId}:analytics:dashboard:${todayDateStr}`,
-              DASHBOARD_CACHE_TTL,
-              async () => {
-                const todayStart = new Date(`${todayDateStr}T00:00:00Z`);
-                const sevenDaysAgo = new Date(todayStart);
-                sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
-                const thirtyDaysAgo = new Date(todayStart);
-                thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
+        // Phase 24 cache key — covered by invalidateOrgAnalytics() which also
+        // deletes this key. Short TTL of 60 s absorbs load between worker cycles.
+        const result = await getCached<AdminDashboardData>(
+          `org:${orgId}:dashboard`,
+          DASHBOARD_CACHE_TTL,
+          async () => {
+            // ── ONE DB query: primary-key lookup on org_dashboard_snapshot ──────
+            const { data: snapshotData, error: snapshotError } = await supabase
+              .from("org_dashboard_snapshot")
+              .select(
+                "active_employee_count, recent_employee_count, inactive_employee_count, " +
+                "active_employees_today, today_session_count, today_distance_km, " +
+                "pending_expense_count, pending_expense_amount",
+              )
+              .eq("organization_id", orgId)
+              .maybeSingle();
 
-                const [activeCountResult, recentCountResult, totalCountResult, todayMetricsResult, pendingExpensesResult, sessionTrend, leaderboard] = await Promise.all([
-                  supabase
-                    .from("employee_latest_sessions")
-                    .select("*", { count: "exact", head: true })
-                    .eq("organization_id", orgId)
-                    .eq("status", "ACTIVE"),
+            if (snapshotError) {
+              throw new Error(
+                `Dashboard: snapshot query failed: ${snapshotError.message}`,
+              );
+            }
 
-                  supabase
-                    .from("employee_latest_sessions")
-                    .select("*", { count: "exact", head: true })
-                    .eq("organization_id", orgId)
-                    .eq("status", "RECENT"),
+            const snap = snapshotData as DashboardSnapshot | null;
 
-                  supabase
-                    .from("employee_latest_sessions")
-                    .select("*", { count: "exact", head: true })
-                    .eq("organization_id", orgId),
+            // ── Two analytics calls (each independently Redis-cached at 5 min) ─
+            const [sessionTrend, leaderboard] = await Promise.all([
+              analyticsService.getSessionTrend(
+                request,
+                sevenDaysAgo.toISOString(),
+                undefined,
+              ),
+              analyticsService.getLeaderboard(
+                request,
+                "distance",
+                thirtyDaysAgo.toISOString(),
+                undefined,
+                5,
+              ),
+            ]);
 
-                  supabase
-                    .from("org_daily_metrics")
-                    .select("total_sessions, total_distance_km")
-                    .eq("organization_id", orgId)
-                    .eq("date", todayDateStr)
-                    .maybeSingle(),
-
-                  supabase
-                    .from("expenses")
-                    .select("amount")
-                    .eq("organization_id", orgId)
-                    .eq("status", "PENDING"),
-
-                  analyticsService.getSessionTrend(request, sevenDaysAgo.toISOString(), undefined),
-
-                  analyticsService.getLeaderboard(request, "distance", thirtyDaysAgo.toISOString(), undefined, 5),
-                ]);
-
-                const snapshotError = activeCountResult.error ?? recentCountResult.error ?? totalCountResult.error;
-                if (snapshotError) {
-                  throw new Error(`Dashboard: snapshot query failed: ${snapshotError.message}`);
-                }
-                if (todayMetricsResult.error) {
-                  throw new Error(`Dashboard: today metrics query failed: ${todayMetricsResult.error.message}`);
-                }
-                if (pendingExpensesResult.error) {
-                  throw new Error(`Dashboard: pending expenses query failed: ${pendingExpensesResult.error.message}`);
-                }
-
-                const activeEmployeeCount = activeCountResult.count ?? 0;
-                const recentEmployeeCount = recentCountResult.count ?? 0;
-                const inactiveEmployeeCount = (totalCountResult.count ?? 0) - activeEmployeeCount - recentEmployeeCount;
-
-                const todayRow = todayMetricsResult.data as { total_sessions: number; total_distance_km: number } | null;
-                const todaySessionCount = todayRow?.total_sessions ?? 0;
-                const todayDistanceKm = Math.round((todayRow?.total_distance_km ?? 0) * 100) / 100;
-
-                const pendingExpenses = (pendingExpensesResult.data ?? []) as Array<{ amount: number }>;
-                const pendingExpenseCount = pendingExpenses.length;
-                const pendingExpenseAmount = Math.round(
-                  pendingExpenses.reduce((sum, e) => sum + Number(e.amount), 0) * 100,
-                ) / 100;
-
-                return {
-                  activeEmployeeCount,
-                  recentEmployeeCount,
-                  inactiveEmployeeCount,
-                  activeEmployeesToday: activeEmployeeCount,
-                  todaySessionCount,
-                  todayDistanceKm,
-                  pendingExpenseCount,
-                  pendingExpenseAmount,
-                  sessionTrend,
-                  leaderboard,
-                } satisfies AdminDashboardData;
-              },
-            ),
+            return {
+              activeEmployeeCount:    snap?.active_employee_count    ?? 0,
+              recentEmployeeCount:    snap?.recent_employee_count    ?? 0,
+              inactiveEmployeeCount:  snap?.inactive_employee_count  ?? 0,
+              activeEmployeesToday:   snap?.active_employees_today   ?? 0,
+              todaySessionCount:      snap?.today_session_count      ?? 0,
+              todayDistanceKm:        snap?.today_distance_km        ?? 0,
+              pendingExpenseCount:    snap?.pending_expense_count    ?? 0,
+              pendingExpenseAmount:   Number(snap?.pending_expense_amount ?? 0),
+              sessionTrend,
+              leaderboard,
+            } satisfies AdminDashboardData;
+          },
         );
 
         reply.status(200).send(ok(result));

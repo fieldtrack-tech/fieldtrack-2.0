@@ -577,6 +577,53 @@ export type Database = {
           },
         ]
       }
+      org_dashboard_snapshot: {
+        Row: {
+          organization_id: string
+          active_employee_count: number
+          recent_employee_count: number
+          inactive_employee_count: number
+          active_employees_today: number
+          today_session_count: number
+          today_distance_km: number
+          pending_expense_count: number
+          pending_expense_amount: number
+          updated_at: string
+        }
+        Insert: {
+          organization_id: string
+          active_employee_count?: number
+          recent_employee_count?: number
+          inactive_employee_count?: number
+          active_employees_today?: number
+          today_session_count?: number
+          today_distance_km?: number
+          pending_expense_count?: number
+          pending_expense_amount?: number
+          updated_at?: string
+        }
+        Update: {
+          organization_id?: string
+          active_employee_count?: number
+          recent_employee_count?: number
+          inactive_employee_count?: number
+          active_employees_today?: number
+          today_session_count?: number
+          today_distance_km?: number
+          pending_expense_count?: number
+          pending_expense_amount?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_dashboard_snapshot_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

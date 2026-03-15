@@ -52,13 +52,119 @@ function nextDayISO(date: string): string {
  *  3. For (organization_id, date): aggregate employee_daily_metrics for that
  *     day (no attendance_sessions scan), then UPSERT org_daily_metrics.
  *
- *  4. Invalidate the org analytics cache so dashboards pick up fresh data.
+ *  4. Update org_dashboard_snapshot (Step 3.5 — inserted before cache invalidation).
+ *  5. Invalidate the org analytics cache so dashboards pick up fresh data.
  *
  * Idempotency guarantee:
  *  Running the job N times always produces the same result because every run
  *  recomputes from the source data — there is no per-run counter.  This means
  *  retries, duplicate enqueues, and manual replays are all safe.
  */
+
+/**
+ * Compute and UPSERT the org_dashboard_snapshot row for `organizationId`.
+ *
+ * Always reads current state — not session-date-scoped — so running on a
+ * historical session still leaves the snapshot with up-to-date figures.
+ *
+ * Errors are logged but NOT re-thrown so a snapshot failure never causes a
+ * checkout job to be marked failed.
+ */
+async function updateDashboardSnapshot(
+  organizationId: string,
+  app: FastifyInstance,
+): Promise<void> {
+  try {
+    const today = new Date().toISOString().substring(0, 10);
+
+    // Three queries run in parallel — none block each other.
+    const [empStatusResult, todayMetricsResult, pendingExpResult] =
+      await Promise.all([
+        supabase
+          .from("employee_latest_sessions")
+          .select("status")
+          .eq("organization_id", organizationId),
+
+        supabase
+          .from("org_daily_metrics")
+          .select("total_sessions, total_distance_km")
+          .eq("organization_id", organizationId)
+          .eq("date", today)
+          .maybeSingle(),
+
+        supabase
+          .from("expenses")
+          .select("amount")
+          .eq("organization_id", organizationId)
+          .eq("status", "PENDING"),
+      ]);
+
+    if (empStatusResult.error) {
+      app.log.warn(
+        { organizationId, error: empStatusResult.error.message },
+        "Analytics worker: dashboard snapshot — employee_latest_sessions query failed",
+      );
+      return;
+    }
+    if (pendingExpResult.error) {
+      app.log.warn(
+        { organizationId, error: pendingExpResult.error.message },
+        "Analytics worker: dashboard snapshot — expenses query failed",
+      );
+      return;
+    }
+
+    const empRows = (empStatusResult.data ?? []) as Array<{ status: string | null }>;
+    const activeCount = empRows.filter((r) => r.status === "ACTIVE").length;
+    const recentCount = empRows.filter((r) => r.status === "RECENT").length;
+    const inactiveCount = empRows.length - activeCount - recentCount;
+
+    const todayRow = todayMetricsResult.data as {
+      total_sessions: number;
+      total_distance_km: number;
+    } | null;
+
+    const pendingRows = (pendingExpResult.data ?? []) as Array<{ amount: number }>;
+    const pendingExpenseCount = pendingRows.length;
+    const pendingExpenseAmount =
+      Math.round(
+        pendingRows.reduce((sum, e) => sum + Number(e.amount), 0) * 100,
+      ) / 100;
+
+    const { error: upsertErr } = await supabase
+      .from("org_dashboard_snapshot")
+      .upsert(
+        {
+          organization_id: organizationId,
+          active_employee_count: activeCount,
+          recent_employee_count: recentCount,
+          inactive_employee_count: inactiveCount,
+          active_employees_today: activeCount,
+          today_session_count: todayRow?.total_sessions ?? 0,
+          today_distance_km:
+            Math.round((todayRow?.total_distance_km ?? 0) * 100) / 100,
+          pending_expense_count: pendingExpenseCount,
+          pending_expense_amount: pendingExpenseAmount,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "organization_id" },
+      );
+
+    if (upsertErr) {
+      app.log.warn(
+        { organizationId, error: upsertErr.message },
+        "Analytics worker: dashboard snapshot upsert failed",
+      );
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    app.log.warn(
+      { organizationId, error: message },
+      "Analytics worker: dashboard snapshot update threw unexpectedly",
+    );
+  }
+}
+
 export async function processAnalyticsJob(
   job: Job<AnalyticsJobData>,
   app: FastifyInstance,
@@ -227,6 +333,21 @@ export async function processAnalyticsJob(
       `Analytics worker: org_daily_metrics upsert failed: ${orgUpsertErr.message}`,
     );
   }
+
+  // ── Step 3.5: Update org_dashboard_snapshot ───────────────────────────────
+  //
+  // Runs after org_daily_metrics is committed so today's session/distance
+  // figures are already accurate when we snapshot them.
+  //
+  // Three independent sub-queries run in parallel:
+  //   a) employee status counts from employee_latest_sessions (O(org_employees))
+  //   b) today's session/distance from org_daily_metrics (1 row by PK)
+  //   c) pending expense count + amount from expenses (filtered by status)
+  //
+  // Errors here are non-fatal: a failed snapshot leaves the dashboard reading
+  // slightly stale data — far better than failing a checkout job entirely.
+
+  await updateDashboardSnapshot(organizationId, app);
 
   // ── Step 4: Invalidate analytics caches ──────────────────────────────────
 
