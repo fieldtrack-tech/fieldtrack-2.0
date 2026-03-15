@@ -44,7 +44,7 @@ export function useAllOrgSessions() {
         page: String(pageParam),
         limit: "1000",
       }),
-    staleTime: 30_000,
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {

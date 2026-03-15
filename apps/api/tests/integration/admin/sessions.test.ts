@@ -288,4 +288,29 @@ describe("GET /admin/sessions", () => {
     expect(body.data).toHaveLength(0);
     expect(body.pagination.total).toBe(0);
   });
+
+  // ─── Employee name in response ─────────────────────────────────────────────
+
+  it("includes employee_name and employee_code in each session row", async () => {
+    vi.mocked(attendanceRepository.findLatestSessionPerEmployee).mockResolvedValue({
+      data: [activeSnapshot, recentSnapshot],
+      total: 2,
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/admin/sessions",
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      data: Array<{ employee_name: string | null; employee_code: string | null }>;
+    };
+    // Both rows must carry real names, not generated identifiers.
+    expect(body.data[0].employee_name).toBe("Test Employee");
+    expect(body.data[0].employee_code).toBe("EMP001");
+    expect(body.data[1].employee_name).toBe("Recent Employee");
+    expect(body.data[1].employee_code).toBe("EMP002");
+  });
 });

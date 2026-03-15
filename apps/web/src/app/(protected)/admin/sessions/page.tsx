@@ -68,7 +68,7 @@ function groupSessions(sessions: AttendanceSession[]): EmployeeSessionGroup[] {
     const status = latest.activityStatus ?? deriveStatus(latest);
     groups.push({
       employeeId: empId,
-      employeeName: latest.employee_name ?? `Employee _${empId.slice(-4)}`,
+      employeeName: latest.employee_name ?? latest.employee_code ?? empId,
       employeeCode: latest.employee_code ?? null,
       activityStatus: status,
       latestSession: latest,

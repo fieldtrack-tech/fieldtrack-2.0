@@ -48,6 +48,9 @@ export function mapLatestSessionRow(row: Record<string, unknown>): SessionDTO {
   // Support both so the mapper works against either environment.
   const checkinAt = (row.latest_checkin ?? row.checkin_at ?? row.updated_at) as string | null;
   const checkoutAt = (row.latest_checkout ?? row.checkout_at) as string | null;
+  // When the query joins employees via FK, Supabase returns a nested object.
+  // Fall back to flat columns so the mapper works in both test stubs and live.
+  const emp = row.employees as { name?: string; employee_code?: string } | null;
   return {
     id: (row.session_id as string | null) ?? null,
     employee_id: row.employee_id as string,
@@ -61,8 +64,8 @@ export function mapLatestSessionRow(row: Record<string, unknown>): SessionDTO {
     distance_recalculation_status: null,
     created_at: checkinAt ?? (row.updated_at as string),
     updated_at: row.updated_at as string,
-    employee_code: (row.employee_code as string | null) ?? null,
-    employee_name: (row.employee_name as string | null) ?? null,
+    employee_code: (row.employee_code as string | null) ?? emp?.employee_code ?? null,
+    employee_name: (row.employee_name as string | null) ?? emp?.name ?? null,
     activityStatus: row.status as ActivityStatus,
   };
 }
@@ -236,20 +239,32 @@ export const attendanceRepository = {
     const safeLimit = Math.min(1000, Math.max(1, limit));
     const safeOffset = (Math.max(1, page) - 1) * safeLimit;
 
+    // Join employees via FK so employee_name and employee_code are always present.
     let query = supabase
       .from("employee_latest_sessions")
-      .select("*", { count: "exact" })
+      .select(
+        "employee_id, organization_id, session_id, latest_checkin, latest_checkout, total_distance_km, total_duration_seconds, status, updated_at, employees!employee_latest_sessions_employee_id_fkey(name, employee_code)",
+        { count: "exact" },
+      )
       .eq("organization_id", request.organizationId);
 
     if (status !== "all") {
       query = query.eq("status", status.toUpperCase());
     }
 
+    const t0 = Date.now();
     const { data, error, count } = await query
       // Production schema has no status_priority column; order by updated_at only
       // and re-sort in JS to guarantee ACTIVE → RECENT → INACTIVE ordering.
       .order("updated_at", { ascending: false })
       .range(safeOffset, safeOffset + safeLimit - 1);
+    const durationMs = Date.now() - t0;
+    if (durationMs > 100) {
+      request.log.warn(
+        { route: "/admin/sessions", queryName: "findLatestSessionPerEmployee", durationMs },
+        "slow query",
+      );
+    }
 
     if (error) {
       throw new Error(`Failed to fetch latest sessions per employee: ${error.message}`);
