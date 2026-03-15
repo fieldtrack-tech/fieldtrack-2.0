@@ -429,45 +429,34 @@ export type Database = {
           employee_id: string
           organization_id: string
           session_id: string | null
-          checkin_at: string | null
-          checkout_at: string | null
+          /** Authoritative name: latest_checkin. Migration alias: checkin_at. */
+          latest_checkin: string | null
+          latest_checkout: string | null
           total_distance_km: number | null
           total_duration_seconds: number | null
-          distance_recalculation_status: string
-          employee_code: string | null
-          employee_name: string | null
           status: string
-          status_priority: number
           updated_at: string
         }
         Insert: {
           employee_id: string
           organization_id: string
           session_id?: string | null
-          checkin_at?: string | null
-          checkout_at?: string | null
+          latest_checkin?: string | null
+          latest_checkout?: string | null
           total_distance_km?: number | null
           total_duration_seconds?: number | null
-          distance_recalculation_status?: string
-          employee_code?: string | null
-          employee_name?: string | null
           status?: string
-          status_priority?: number
           updated_at?: string
         }
         Update: {
           employee_id?: string
           organization_id?: string
           session_id?: string | null
-          checkin_at?: string | null
-          checkout_at?: string | null
+          latest_checkin?: string | null
+          latest_checkout?: string | null
           total_distance_km?: number | null
           total_duration_seconds?: number | null
-          distance_recalculation_status?: string
-          employee_code?: string | null
-          employee_name?: string | null
           status?: string
-          status_priority?: number
           updated_at?: string
         }
         Relationships: [

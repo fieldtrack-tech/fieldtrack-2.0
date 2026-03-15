@@ -43,19 +43,23 @@ function computeActivityStatus(checkoutAt: string | null): ActivityStatus {
  * Returns a SessionDTO — database rows never leak directly to the API.
  */
 export function mapLatestSessionRow(row: Record<string, unknown>): SessionDTO {
-  // checkin_at may be missing if the production snapshot table predates the column
-  // being added; fall back to updated_at so dates render correctly.
-  const checkinAt = (row.checkin_at ?? row.updated_at) as string;
+  // Production schema uses `latest_checkin` / `latest_checkout`.
+  // Migration schema uses `checkin_at` / `checkout_at`.
+  // Support both so the mapper works against either environment.
+  const checkinAt = (row.latest_checkin ?? row.checkin_at ?? row.updated_at) as string | null;
+  const checkoutAt = (row.latest_checkout ?? row.checkout_at) as string | null;
   return {
     id: (row.session_id as string | null) ?? null,
     employee_id: row.employee_id as string,
     organization_id: row.organization_id as string,
-    checkin_at: checkinAt,
-    checkout_at: (row.checkout_at as string | null) ?? null,
+    checkin_at: checkinAt ?? (row.updated_at as string),
+    checkout_at: checkoutAt,
     total_distance_km: (row.total_distance_km as number | null) ?? null,
     total_duration_seconds: (row.total_duration_seconds as number | null) ?? null,
-    distance_recalculation_status: (row.distance_recalculation_status as string | null) ?? null,
-    created_at: checkinAt,
+    // distance_recalculation_status is not in the authoritative production schema;
+    // always null on snapshot rows to prevent serialization errors.
+    distance_recalculation_status: null,
+    created_at: checkinAt ?? (row.updated_at as string),
     updated_at: row.updated_at as string,
     employee_code: (row.employee_code as string | null) ?? null,
     employee_name: (row.employee_name as string | null) ?? null,
@@ -242,7 +246,8 @@ export const attendanceRepository = {
     }
 
     const { data, error, count } = await query
-      .order("status_priority", { ascending: true })
+      // Production schema has no status_priority column; order by updated_at only
+      // and re-sort in JS to guarantee ACTIVE → RECENT → INACTIVE ordering.
       .order("updated_at", { ascending: false })
       .range(safeOffset, safeOffset + safeLimit - 1);
 
@@ -251,6 +256,19 @@ export const attendanceRepository = {
     }
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
+
+    // Re-sort: ACTIVE (1) → RECENT (2) → INACTIVE (3), then newest updated_at first.
+    const statusPriority = (s: unknown): number =>
+      s === "ACTIVE" ? 1 : s === "RECENT" ? 2 : 3;
+    rows.sort((a, b) => {
+      const diff = statusPriority(a.status) - statusPriority(b.status);
+      if (diff !== 0) return diff;
+      return (
+        new Date(b.updated_at as string).getTime() -
+        new Date(a.updated_at as string).getTime()
+      );
+    });
+
     return { data: rows.map(mapLatestSessionRow), total: count ?? 0 };
   },
 
@@ -296,7 +314,7 @@ export const attendanceRepository = {
       .update({
         total_distance_km: totalDistanceKm,
         total_duration_seconds: totalDurationSeconds,
-        distance_recalculation_status: "done",
+        // distance_recalculation_status omitted — not in the authoritative production schema.
         updated_at: new Date().toISOString(),
       })
       .eq("session_id", sessionId);

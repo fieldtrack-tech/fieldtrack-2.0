@@ -38,10 +38,13 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
       try {
         const orgId = request.organizationId;
 
-        // Step 1 — fetch snapshot (all employees, ordered ACTIVE → RECENT → INACTIVE)
+        // Step 1 — fetch snapshot (all employees, ordered ACTIVE → RECENT → INACTIVE).
+        // SELECT * so the query works regardless of whether the production table
+        // has employee_name/employee_code columns (they are absent in the
+        // authoritative schema; the TS cast handles undefined gracefully).
         const { data: snapshots, error: snapError } = await supabase
           .from("employee_latest_sessions")
-          .select("employee_id, employee_name, employee_code, status, session_id")
+          .select("*")
           .eq("organization_id", orgId)
           .order("status", { ascending: true });
 
