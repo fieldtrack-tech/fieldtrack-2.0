@@ -141,6 +141,7 @@ export type Database = {
           employee_code: string
           id: string
           is_active: boolean
+          last_activity_at: string | null
           name: string
           organization_id: string
           phone: string | null
@@ -152,6 +153,7 @@ export type Database = {
           employee_code: string
           id?: string
           is_active?: boolean
+          last_activity_at?: string | null
           name: string
           organization_id: string
           phone?: string | null
@@ -163,6 +165,7 @@ export type Database = {
           employee_code?: string
           id?: string
           is_active?: boolean
+          last_activity_at?: string | null
           name?: string
           organization_id?: string
           phone?: string | null
@@ -195,6 +198,7 @@ export type Database = {
           id: string
           organization_id: string
           receipt_url: string | null
+          rejection_comment: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           status: Database["public"]["Enums"]["expense_status"]
@@ -209,6 +213,7 @@ export type Database = {
           id?: string
           organization_id: string
           receipt_url?: string | null
+          rejection_comment?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: Database["public"]["Enums"]["expense_status"]
@@ -223,6 +228,7 @@ export type Database = {
           id?: string
           organization_id?: string
           receipt_url?: string | null
+          rejection_comment?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: Database["public"]["Enums"]["expense_status"]
@@ -657,7 +663,7 @@ export type Database = {
     Enums: {
       distance_job_status: "pending" | "processing" | "done" | "failed"
       expense_status: "PENDING" | "APPROVED" | "REJECTED"
-      user_role: "ADMIN" | "EMPLOYEE"
+      user_role: "ADMIN" | "EMPLOYEE" | "SUPERVISOR" | "FINANCE" | "TEAM_LEAD"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -790,7 +796,7 @@ export const Constants = {
     Enums: {
       distance_job_status: ["pending", "processing", "done", "failed"],
       expense_status: ["PENDING", "APPROVED", "REJECTED"],
-      user_role: ["ADMIN", "EMPLOYEE"],
+      user_role: ["ADMIN", "EMPLOYEE", "SUPERVISOR", "FINANCE", "TEAM_LEAD"],
     },
   },
 } as const

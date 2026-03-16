@@ -14,7 +14,7 @@
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-export type UserRole = "ADMIN" | "EMPLOYEE";
+export type UserRole = "ADMIN" | "EMPLOYEE" | "SUPERVISOR" | "FINANCE" | "TEAM_LEAD";
 export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type ActivityStatus = "ACTIVE" | "RECENT" | "INACTIVE";
 
@@ -87,6 +87,7 @@ export interface Expense {
   description: string;
   receipt_url: string | null;
   status: ExpenseStatus;
+  rejection_comment: string | null;
   submitted_at: string;
   reviewed_at: string | null;
   reviewed_by: string | null;

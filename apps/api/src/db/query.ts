@@ -1,6 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import type { TenantContext } from "../utils/tenant.js";
 import { supabaseServiceClient } from "../config/supabase.js";
+import type { Database } from "../types/database.js";
 
 /**
  * Tenant-aware query factory for backend database access.
@@ -18,24 +19,25 @@ import { supabaseServiceClient } from "../config/supabase.js";
  *     .select("id, amount, status")
  *     .eq("employee_id", employeeId)
  *     .order("submitted_at", { ascending: false });
- */
-/**
- * All Postgres tables that have an organization_id column and are therefore
- * eligible for tenant-scoped access via orgTable().
  *
- * Add new tables here when they carry organization_id.
- * Passing any other string to orgTable() is a compile-time error.
+ * Phase 4: OrgScopedTable is now derived directly from the Database type so
+ * every new table in database.ts automatically becomes available here.
  */
-export type OrgScopedTable =
-    | "admin_sessions"
-    | "attendance_sessions"
-    | "employees"
-    | "employee_daily_metrics"
-    | "employee_latest_sessions"
-    | "expenses"
-    | "gps_locations"
-    | "org_daily_metrics"
-    | "session_summaries";
+
+/** All org-scoped tables that carry an organization_id column. */
+export type OrgScopedTable = Extract<
+  keyof Database["public"]["Tables"],
+  | "admin_sessions"
+  | "attendance_sessions"
+  | "employees"
+  | "employee_daily_metrics"
+  | "employee_latest_sessions"
+  | "expenses"
+  | "gps_locations"
+  | "org_daily_metrics"
+  | "org_dashboard_snapshot"
+  | "session_summaries"
+>;
 
 export function orgTable(
     context: TenantContext | FastifyRequest,
@@ -59,7 +61,7 @@ export function orgTable(
         select(columns = "*", options?: { count?: "exact" | "planned" | "estimated"; head?: boolean }) {
             return db.from(table).select(columns, options).eq("organization_id", orgId);
         },
-        update<V extends object>(values: V) {
+        update<V extends Partial<Database["public"]["Tables"][OrgScopedTable]["Update"]>>(values: V) {
             return db.from(table).update(values).eq("organization_id", orgId);
         },
         delete() {
