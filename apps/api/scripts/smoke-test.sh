@@ -250,6 +250,30 @@ else
   log_fail "Admin access /admin/dashboard invalid or failed ($STATUS) $(cat "$TMP_BODY")"
 fi
 
+STATUS=$(request GET "/admin/employees?page=1&limit=5" "$ADMIN_TOKEN")
+
+if validate_api_response "GET /admin/employees (admin)" && [ "$STATUS" = "200" ]; then
+  log_pass "Admin access /admin/employees"
+else
+  log_fail "Admin access /admin/employees invalid or failed ($STATUS) $(cat "$TMP_BODY")"
+fi
+
+STATUS=$(request GET "/admin/expenses/export" "$ADMIN_TOKEN")
+
+if [ "$STATUS" = "200" ]; then
+  log_pass "Admin access /admin/expenses/export"
+else
+  log_fail "Admin access /admin/expenses/export invalid or failed ($STATUS)"
+fi
+
+STATUS=$(request GET "/admin/queues" "$ADMIN_TOKEN")
+
+if validate_api_response "GET /admin/queues (admin)" && [ "$STATUS" = "200" ]; then
+  log_pass "Admin access /admin/queues"
+else
+  log_fail "Admin access /admin/queues invalid or failed ($STATUS) $(cat "$TMP_BODY")"
+fi
+
 # ------------------------------------------------
 # Summary
 # ------------------------------------------------

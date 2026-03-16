@@ -3,46 +3,9 @@
 # All services use the shared fieldtrack_network.
 # No public ports exposed — access via Nginx reverse proxy only.
 #
-# Usage: docker compose -f docker-compose.monitoring.yml up -d
+# Usage: docker compose -f infra/docker-compose.monitoring.yml --env-file infra/.env.monitoring up -d
 
-env_file:
-  - .env.monitoring
-
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
-      - prometheus-data:/prometheus
-    environment:
-      - METRICS_SCRAPE_TOKEN=${METRICS_SCRAPE_TOKEN}
-    restart: always
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./grafana:/var/lib/grafana
-      - grafana-data:/var/lib/grafana
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
-    restart: always
-  promtail:
-    image: grafana/promtail:latest
-    volumes:
-      - ./promtail/promtail.yml:/etc/promtail/promtail.yml
-      - promtail-data:/var/lib/promtail
-    restart: always
-
-volumes:
-  prometheus-data:
-  grafana-data:
-  promtail-data:
-      - loki_data:/loki
-    networks:
-      - fieldtrack_network
+services:
 
   promtail:
     image: grafana/promtail:2.9.6
