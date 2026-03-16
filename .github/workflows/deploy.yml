@@ -56,10 +56,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
@@ -90,10 +90,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
@@ -124,10 +124,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
@@ -175,7 +175,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Extract commit SHA
         id: sha
@@ -266,26 +266,41 @@ jobs:
 
             # ── Nginx ──────────────────────────────────────────────────────────
             echo "=== Syncing Nginx config ==="
-            # Back up current config before overwriting
-            sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
 
-            # Apply repo baseline (always has blue port 3001 as default)
-            sudo cp "$INFRA_DIR/nginx/fieldtrack.conf" "$NGINX_LIVE"
-            sudo sed -i "s|__API_DOMAIN__|$API_DOMAIN|g" "$NGINX_LIVE"
-            sudo sed -i "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" "$NGINX_LIVE"
-
-            # Re-apply the current active slot so nginx keeps routing correctly
+            # Determine which port is currently active so the rendered config
+            # keeps routing to the correct backend slot.
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then
-              sudo sed -i "s|server 127.0.0.1:3001;|server 127.0.0.1:3002;|" "$NGINX_LIVE"
-              echo "Active slot is green — patched upstream to port 3002."
+              BACKEND_PORT=3002
             else
-              echo "Active slot is blue — upstream port 3001 (default)."
+              BACKEND_PORT=3001
             fi
 
-            sudo nginx -t
+            # Back up current live config before overwriting.
+            sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
+
+            # Render the template with all placeholders substituted in one pass.
+            # __BACKEND_PORT__ carries the active slot port (3001 or 3002).
+            # __API_DOMAIN__ / __FRONTEND_DOMAIN__ carry the domain values.
+            NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
+            sed \
+              -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
+              -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
+              -e "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" \
+              "$INFRA_DIR/nginx/fieldtrack.conf" > "$NGINX_TMP"
+
+            sudo cp "$NGINX_TMP" "$NGINX_LIVE"
+            rm -f "$NGINX_TMP"
+
+            # Validate before reloading; restore backup if nginx rejects the config.
+            if ! sudo nginx -t 2>&1; then
+              echo "ERROR: nginx configuration test failed. Restoring backup..."
+              sudo cp /tmp/fieldtrack.conf.bak "$NGINX_LIVE"
+              exit 1
+            fi
+
             sudo systemctl reload nginx
-            echo "Nginx reloaded."
+            echo "Nginx reloaded (active slot: $ACTIVE_SLOT / port: $BACKEND_PORT)."
 
             # ── Monitoring stack (conditional on config hash) ─────────────────
             # Hash all non-nginx config files under /infra to detect changes.
@@ -346,7 +361,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Wait for API health
         env:

@@ -18,9 +18,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Type-check, lint & test
+  ci:
+    name: Type-check, lint, test & build
     runs-on: ubuntu-latest
+
+    # apps/web/src/lib/env.ts validates NEXT_PUBLIC_* vars at import-time (Zod).
+    # These must be present for typecheck, test, and build steps alike.
+    #
+    # Values below are CI-safe build-time defaults. Because all three vars are
+    # NEXT_PUBLIC_* (inlined into the browser bundle), they carry no secrets.
+    # Override any of them in GitHub → Settings → Secrets to use real values.
+    env:
+      NEXT_PUBLIC_API_URL: /api/proxy
+      # Supabase project URL — a valid URL is required; this is public by design.
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      # Supabase anon key — public read-only JWT; placeholder satisfies min(1).
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+      # Mapbox public token — used for map tiles; placeholder satisfies min(1).
+      NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
 
     steps:
       - uses: actions/checkout@v4
@@ -28,10 +43,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "20"
           cache: "npm"
+          # Explicit lock-file path ensures the cache key is correct in a monorepo
+          # where there may be nested package-lock.json files.
+          cache-dependency-path: "**/package-lock.json"
 
       - name: Install workspace dependencies
+        # Run from repo root so npm workspaces resolves all packages together.
         run: npm ci
 
       - name: Build shared types
@@ -45,6 +64,12 @@ jobs:
 
       - name: Run unit tests
         run: npm run test -w apps/web
+
+      - name: Next.js build
+        # Verifies the production bundle compiles successfully.
+        # Catches import errors, missing env vars, and broken server components
+        # that typecheck alone would not surface.
+        run: npm run build -w apps/web
 
       - name: Upload coverage
         if: always()
