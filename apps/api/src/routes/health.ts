@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import { redisConnectionOptions } from "../config/redis.js";
 import { supabaseServiceClient } from "../config/supabase.js";
 import { distanceQueue } from "../workers/distance.queue.js";

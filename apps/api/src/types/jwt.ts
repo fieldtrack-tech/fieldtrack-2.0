@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const ROLES = ["ADMIN", "EMPLOYEE"] as const;
+const ROLES = ["ADMIN", "EMPLOYEE", "SUPERVISOR", "FINANCE", "TEAM_LEAD"] as const;
 
 /**
  * Strict schema for validating decoded JWT payloads.
@@ -13,7 +13,7 @@ export const jwtPayloadSchema = z.object({
     sub: z.string().min(1, "JWT 'sub' claim is required"),
     email: z.string().email().optional(),
     role: z.enum(ROLES, {
-        error: "Role must be ADMIN or EMPLOYEE",
+        error: "Role must be ADMIN, EMPLOYEE, SUPERVISOR, FINANCE, or TEAM_LEAD",
     }),
     organization_id: z.string().uuid({ error: "organization_id must be a valid UUID" }),
 });
