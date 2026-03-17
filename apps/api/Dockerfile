@@ -1,6 +1,7 @@
 # Build context: monorepo root (docker build -f apps/api/Dockerfile .)
 # ---- Stage 1: Build ----
-FROM node:24-alpine AS builder
+# Pinned to specific version to prevent supply chain attacks
+FROM node:24.2.0-alpine AS builder
 
 WORKDIR /workspace
 
@@ -23,7 +24,8 @@ COPY apps/api/src ./src
 RUN npm run build
 
 # ---- Stage 2: Production ----
-FROM node:24-alpine AS production
+# Pinned to specific version to prevent supply chain attacks
+FROM node:24.2.0-alpine AS production
 
 WORKDIR /app
 

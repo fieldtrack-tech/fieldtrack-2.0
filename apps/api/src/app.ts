@@ -26,9 +26,9 @@ import compressPlugin from "@fastify/compress";
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: getLoggerConfig(env.NODE_ENV),
-    // Phase 10: HTTP hardening
-    bodyLimit: 1_000_000,           // 1 MB max request body
-    connectionTimeout: 5_000,        // 5 s TCP connection timeout
+    // Phase 10: HTTP hardening (externalized limits)
+    bodyLimit: env.BODY_LIMIT_BYTES,
+    connectionTimeout: env.REQUEST_TIMEOUT_MS,
     keepAliveTimeout: 72_000,        // 72 s keep-alive (ALB default is 60 s)
     // Phase 10: Request correlation — generate UUID if no x-request-id header provided
     requestIdHeader: "x-request-id",

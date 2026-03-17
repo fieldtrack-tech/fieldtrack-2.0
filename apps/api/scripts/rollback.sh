@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
+# Deployment root must be explicitly defined
+DEPLOY_ROOT="${DEPLOY_ROOT:-}"
+
+if [ -z "$DEPLOY_ROOT" ]; then
+    echo "ERROR: DEPLOY_ROOT environment variable must be set."
+    echo "Example: export DEPLOY_ROOT=/home/ashish/FieldTrack-2.0"
+    exit 1
+fi
+
+DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 AUTO_MODE=false
@@ -14,10 +23,16 @@ echo "========================================="
 echo "FieldTrack Rollback System"
 echo "========================================="
 
-# Check if deployment history exists
+# Check if deployment history exists and validate checksum
 if [ ! -f "$DEPLOY_HISTORY" ]; then
     echo "ERROR: No deployment history found."
     echo "File not found: $DEPLOY_HISTORY"
+    exit 1
+fi
+
+# Validate deployment history file integrity
+if [ ! -s "$DEPLOY_HISTORY" ]; then
+    echo "ERROR: Deployment history file is empty or corrupted."
     exit 1
 fi
 
@@ -33,6 +48,17 @@ PREVIOUS_SHA="${HISTORY[1]}"
 
 echo "Current deployment : $CURRENT_SHA"
 echo "Rollback target    : $PREVIOUS_SHA"
+echo ""
+
+# Validate that the rollback image exists in the registry
+echo "Validating rollback image exists..."
+if ! docker manifest inspect "ghcr.io/rajashish147/fieldtrack-backend:$PREVIOUS_SHA" >/dev/null 2>&1; then
+    echo "ERROR: Rollback image not found in registry."
+    echo "Image: ghcr.io/rajashish147/fieldtrack-backend:$PREVIOUS_SHA"
+    echo "Cannot proceed with rollback to non-existent image."
+    exit 1
+fi
+echo "✓ Rollback image verified in registry."
 echo ""
 
 if [ "$AUTO_MODE" = false ]; then

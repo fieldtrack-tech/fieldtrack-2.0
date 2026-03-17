@@ -2,7 +2,21 @@ import { supabase } from "@/lib/supabase";
 import { env } from "@/lib/env";
 import { ApiError, ApiResponse, PaginatedResponse } from "@/types";
 
+// Cache session token to avoid repeated fetches
+let cachedToken: string | null = null;
+let tokenExpiry: number = 0;
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
+  const now = Date.now();
+  
+  // Use cached token if still valid (with 30s buffer)
+  if (cachedToken && tokenExpiry > now + 30000) {
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${cachedToken}`,
+    };
+  }
+
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -13,17 +27,90 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
   if (session?.access_token) {
     headers["Authorization"] = `Bearer ${session.access_token}`;
+    cachedToken = session.access_token;
+    // JWT exp is in seconds, convert to milliseconds
+    tokenExpiry = (session.expires_at ?? 0) * 1000;
+  } else {
+    cachedToken = null;
+    tokenExpiry = 0;
   }
 
   return headers;
 }
 
+async function handleAuthFailure(): Promise<void> {
+  // Clear cached token
+  cachedToken = null;
+  tokenExpiry = 0;
+  
+  // Sign out and redirect
+  await supabase.auth.signOut();
+  
+  if (typeof window !== "undefined") {
+    // Clear all query cache on auth failure
+    window.location.href = "/login";
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = 10000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ApiError("Request timeout", 408);
+    }
+    throw error;
+  }
+}
+
+async function retryableFetch(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 2
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchWithTimeout(url, options);
+    } catch (error) {
+      lastError = error as Error;
+      
+      // Only retry GET requests
+      if (options.method && options.method !== "GET") {
+        throw error;
+      }
+
+      // Don't retry on last attempt
+      if (attempt === maxRetries) {
+        throw error;
+      }
+
+      // Exponential backoff: 500ms, 1000ms
+      const backoffMs = 500 * Math.pow(2, attempt);
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  throw lastError;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (response.status === 401) {
-    await supabase.auth.signOut();
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
-    }
+    await handleAuthFailure();
     throw new ApiError("Unauthorized. Please log in again.", 401);
   }
 
@@ -40,10 +127,7 @@ async function handlePaginatedResponse<T>(
   response: Response
 ): Promise<PaginatedResponse<T>> {
   if (response.status === 401) {
-    await supabase.auth.signOut();
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
-    }
+    await handleAuthFailure();
     throw new ApiError("Unauthorized. Please log in again.", 401);
   }
 
@@ -77,7 +161,7 @@ export async function apiGet<T>(
 ): Promise<T> {
   const headers = await getAuthHeaders();
   const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
-  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
+  const response = await retryableFetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
     method: "GET",
     headers,
   });
@@ -91,7 +175,7 @@ export async function apiGetPaginated<T>(
 ): Promise<PaginatedResponse<T>> {
   const headers = await getAuthHeaders();
   const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
-  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
+  const response = await retryableFetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
     method: "GET",
     headers,
   });
@@ -102,7 +186,7 @@ export async function apiGetPaginated<T>(
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const headers = await getAuthHeaders();
 
-  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, {
+  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_URL}${path}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -114,7 +198,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   const headers = await getAuthHeaders();
 
-  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, {
+  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_URL}${path}`, {
     method: "PATCH",
     headers,
     body: JSON.stringify(body),

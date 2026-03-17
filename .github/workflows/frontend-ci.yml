@@ -56,6 +56,9 @@ jobs:
       - name: Build shared types
         run: npm run build -w packages/types
 
+      - name: Dependency vulnerability scan
+        run: npm audit --omit=dev --audit-level=high
+
       - name: TypeScript type-check (web)
         run: npm run type-check -w apps/web
 

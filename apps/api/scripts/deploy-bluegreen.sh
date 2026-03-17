@@ -18,14 +18,24 @@ NETWORK="fieldtrack_network"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-ENV_FILE="/home/ashish/FieldTrack-2.0/apps/api/.env"
+# Deployment root must be explicitly defined
+DEPLOY_USER="${DEPLOY_USER:-$(whoami)}"
+DEPLOY_ROOT="${DEPLOY_ROOT:-}"
+
+if [ -z "$DEPLOY_ROOT" ]; then
+    echo "ERROR: DEPLOY_ROOT environment variable must be set."
+    echo "Example: export DEPLOY_ROOT=/home/ashish/FieldTrack-2.0"
+    exit 1
+fi
+
+ENV_FILE="$DEPLOY_ROOT/apps/api/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
 NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
 ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
-DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
+DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
 MAX_HISTORY=5
 
-MAX_HEALTH_ATTEMPTS=20
+MAX_HEALTH_ATTEMPTS=40
 HEALTH_INTERVAL=3
 
 # ---------------------------------------------------------------------------
@@ -45,6 +55,33 @@ fi
 # Strip any scheme prefix (http:// or https://) — server_name only accepts bare hostnames.
 API_DOMAIN="${API_DOMAIN#https://}"
 API_DOMAIN="${API_DOMAIN#http://}"
+
+# ---------------------------------------------------------------------------
+# Pre-flight: validate METRICS_SCRAPE_TOKEN consistency.
+# The token must match between API and Prometheus or scraping will silently
+# fail and alerts will go blind. Fail fast here instead of deploying broken
+# monitoring.
+# ---------------------------------------------------------------------------
+MONITORING_ENV_FILE="$REPO_DIR/infra/.env.monitoring"
+if [ -f "$MONITORING_ENV_FILE" ]; then
+    API_TOKEN=$(grep -E '^METRICS_SCRAPE_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "")
+    PROM_TOKEN=$(grep -E '^METRICS_SCRAPE_TOKEN=' "$MONITORING_ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "")
+    
+    if [ -n "$API_TOKEN" ] && [ -n "$PROM_TOKEN" ] && [ "$API_TOKEN" != "$PROM_TOKEN" ]; then
+        echo "ERROR: METRICS_SCRAPE_TOKEN mismatch detected!"
+        echo "  API token:        $ENV_FILE"
+        echo "  Prometheus token: $MONITORING_ENV_FILE"
+        echo ""
+        echo "These must be identical or Prometheus scraping will fail silently."
+        echo "Update both files with the same token value."
+        exit 1
+    fi
+    
+    if [ -n "$API_TOKEN" ] && [ -z "$PROM_TOKEN" ]; then
+        echo "WARNING: METRICS_SCRAPE_TOKEN set in API but not in Prometheus config."
+        echo "Prometheus will fail to scrape metrics. Update $MONITORING_ENV_FILE"
+    fi
+fi
 
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
@@ -92,21 +129,32 @@ docker run -d \
   --env-file "$ENV_FILE" \
   "$IMAGE"
 
-echo "[4/7] Waiting for health check..."
+echo "[4/7] Waiting for readiness check..."
 
 # Give the server a moment to boot
 sleep 5
 
 ATTEMPT=0
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null 2>&1; do
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT+1))
 
+    # Check if container crashed during health check
+    if ! docker ps --format '{{.Names}}' | grep -q "^${INACTIVE_NAME}$"; then
+        echo "ERROR: Container $INACTIVE_NAME stopped unexpectedly during readiness check."
+        echo "===== Container logs ($INACTIVE_NAME) ====="
+        docker logs "$INACTIVE_NAME" --tail 100 || true
+        echo "==========================================="
+        echo "Rolling back — removing failed container..."
+        docker rm -f "$INACTIVE_NAME" || true
+        exit 1
+    fi
+
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
-        echo "Health check failed after $MAX_HEALTH_ATTEMPTS attempts."
+        echo "Readiness check failed after $MAX_HEALTH_ATTEMPTS attempts."
 
         echo "===== Container logs ($INACTIVE_NAME) ====="
-        docker logs "$INACTIVE_NAME" --tail 50 || true
+        docker logs "$INACTIVE_NAME" --tail 100 || true
         echo "==========================================="
 
         echo "Rolling back — removing failed container..."
@@ -118,7 +166,7 @@ until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null 
     sleep "$HEALTH_INTERVAL"
 done
 
-echo "Health check passed."
+echo "Readiness check passed."
 
 echo "[5/7] Switching nginx upstream..."
 
@@ -171,21 +219,25 @@ echo "========================================="
 
 # Record successful deployment for rollback capability
 # Maintain history of last MAX_HISTORY deployments
+# Use atomic write to prevent partial history corruption
+DEPLOY_HISTORY_TMP="${DEPLOY_HISTORY}.tmp.$$"
 if [ -f "$DEPLOY_HISTORY" ]; then
     # Prepend new SHA and keep only MAX_HISTORY entries
-    (echo "$IMAGE_SHA"; head -n $((MAX_HISTORY - 1)) "$DEPLOY_HISTORY") > "$DEPLOY_HISTORY.tmp"
-    mv "$DEPLOY_HISTORY.tmp" "$DEPLOY_HISTORY"
+    (echo "$IMAGE_SHA"; head -n $((MAX_HISTORY - 1)) "$DEPLOY_HISTORY") > "$DEPLOY_HISTORY_TMP"
+    mv "$DEPLOY_HISTORY_TMP" "$DEPLOY_HISTORY"
 else
     # Create new history file
-    echo "$IMAGE_SHA" > "$DEPLOY_HISTORY"
+    echo "$IMAGE_SHA" > "$DEPLOY_HISTORY_TMP"
+    mv "$DEPLOY_HISTORY_TMP" "$DEPLOY_HISTORY"
 fi
 
 echo "Deployment history updated: $IMAGE_SHA"
 
 # ---------------------------------------------------------------------------
 # Monitoring stack: only restart when infra configs have actually changed.
-# Hash covers all infra config files except nginx (nginx is rerendered on
-# every deploy above and does not require a monitoring restart).
+# Hash covers all infra config files INCLUDING docker-compose.monitoring.yml.
+# EXCLUDES only nginx template (nginx is rerendered on every deploy above
+# and does not require a monitoring restart).
 # ---------------------------------------------------------------------------
 echo "[monitoring] Checking monitoring stack configuration..."
 MONITORING_HASH=$(find "$REPO_DIR/infra" -readable \

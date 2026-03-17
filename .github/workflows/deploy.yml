@@ -76,6 +76,9 @@ jobs:
       - name: Build shared types package
         run: npm run build -w packages/types
 
+      - name: Dependency vulnerability scan
+        run: npm audit --omit=dev --audit-level=high
+
       - name: TypeScript check (API only — not web)
         working-directory: apps/api
         run: |
@@ -204,6 +207,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Container vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/rajashish147/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+      - name: Upload Trivy scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0.17.10
+        with:
+          image: ghcr.io/rajashish147/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ steps.sha.outputs.sha_short }}
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
 
   # ─────────────────────────────────────────────────────────────────────────────
   # DEPLOY — Blue-green deployment on the VPS
@@ -224,7 +256,8 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            cd /home/ashish/FieldTrack-2.0
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
             chmod +x apps/api/scripts/deploy-bluegreen.sh
@@ -254,7 +287,8 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            REPO_DIR="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            REPO_DIR="$DEPLOY_ROOT"
             INFRA_DIR="$REPO_DIR/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
             ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
@@ -431,7 +465,8 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            cd /home/ashish/FieldTrack-2.0
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
             chmod +x apps/api/scripts/rollback.sh
             ./apps/api/scripts/rollback.sh --auto
 

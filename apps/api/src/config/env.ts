@@ -24,9 +24,12 @@ interface EnvConfig {
   MAX_SESSION_DURATION_HOURS: number;
   // Phase 18: Worker concurrency
   WORKER_CONCURRENCY: number;
-  // Prometheus scrape token — when set, /metrics requires X-Metrics-Token header.
+  // Prometheus scrape token — when set, /metrics requires Authorization: Bearer <token> header.
   // Leave unset in development/test to keep the endpoint open.
   METRICS_SCRAPE_TOKEN: string | undefined;
+  // HTTP limits (externalized)
+  BODY_LIMIT_BYTES: number;
+  REQUEST_TIMEOUT_MS: number;
 }
 
 function getEnvVar(key: string): string {
@@ -90,5 +93,17 @@ export const env: EnvConfig = {
 
   // Prometheus scrape protection.  Set this in production and configure the
   // same value in Prometheus scrape_configs as a custom request_header.
+  // MUST be set in production or app will fail to start.
   METRICS_SCRAPE_TOKEN: process.env["METRICS_SCRAPE_TOKEN"] || undefined,
+
+  // HTTP limits (externalized for environment-specific tuning)
+  BODY_LIMIT_BYTES: getOptionalInt("BODY_LIMIT_BYTES", 1_000_000),
+  REQUEST_TIMEOUT_MS: getOptionalInt("REQUEST_TIMEOUT_MS", 30_000),
 };
+
+// Production safety check: METRICS_SCRAPE_TOKEN must be set
+if (env.NODE_ENV === "production" && !env.METRICS_SCRAPE_TOKEN) {
+  throw new Error(
+    "METRICS_SCRAPE_TOKEN must be set in production to protect /metrics endpoint"
+  );
+}

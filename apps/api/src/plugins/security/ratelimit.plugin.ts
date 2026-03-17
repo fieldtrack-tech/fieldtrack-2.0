@@ -42,13 +42,16 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
         // Redis store — required for Docker / multi-instance deployments.
         redis: rateLimitRedis,
 
-        // Key by Authorization header so each unique bearer token (i.e. each
-        // authenticated user) gets its own quota.  Multiple users behind the
-        // same office NAT or k6 load-test runner won't collide.  Unauthenticated
-        // requests (health checks, docs) fall back to the client IP.
+        // Key by validated user ID (sub claim from JWT) so each authenticated
+        // user gets their own quota. This is more secure than keying by the
+        // raw Authorization header since it uses the verified identity.
+        // Unauthenticated requests fall back to client IP.
         keyGenerator: (request) => {
-            const auth = request.headers.authorization;
-            return typeof auth === "string" && auth.length > 0 ? auth : request.ip;
+            const user = (request as { user?: { sub?: string } }).user;
+            if (user?.sub) {
+                return `user:${user.sub}`;
+            }
+            return `ip:${request.ip}`;
         },
 
         // Bypass rate limiting for localhost health checks / internal tooling.

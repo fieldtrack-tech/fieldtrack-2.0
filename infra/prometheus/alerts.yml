@@ -121,3 +121,28 @@ groups:
       severity: critical
     annotations:
       summary: "Disk usage above 85%"
+
+# ---------------------------------------------------------
+# DEPLOYMENT & INFRASTRUCTURE ALERTS
+# ---------------------------------------------------------
+
+- name: fieldtrack_infrastructure_alerts
+  rules:
+
+  - alert: DeploymentFailure
+    expr: up{job=~"fieldtrack-backend.*"} == 0
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Backend container is down"
+      description: "{{ $labels.job }} has been down for more than 2 minutes. Check deployment logs and container status."
+
+  - alert: ReadinessCheckFailing
+    expr: probe_success{job="fieldtrack-readiness"} == 0
+    for: 3m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Readiness check failing"
+      description: "/ready endpoint has been failing for 3 minutes. Check DB, Redis, and Supabase connectivity."
