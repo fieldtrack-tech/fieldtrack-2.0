@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useMyRoute } from "@/hooks/queries/useRoutes";
 import { useMySession } from "@/hooks/queries/useSessions";
 import { RouteMap } from "@/components/maps/RouteMap";
@@ -9,11 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate, formatTime, formatDistance, formatDuration } from "@/lib/utils";
 
 interface SessionDetailPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default function SessionDetailPage({ params }: SessionDetailPageProps) {
-  const { id } = params;
+  // In Next.js 15, params is a Promise, but in client components we can use React.use()
+  // However, for simplicity and backward compatibility, we'll unwrap it
+  const { id } = React.use(params);
   const { data: locations, isLoading, error } = useMyRoute(id);
   const { data: session } = useMySession(id);
 
