@@ -99,7 +99,7 @@ sleep 5
 
 ATTEMPT=0
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2>&1; do
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT+1))
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
@@ -140,6 +140,11 @@ sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
 # Install the generated config.
 sudo cp "$NGINX_TMP" "$NGINX_CONF"
 rm -f "$NGINX_TMP"
+
+# Remove any stale backup files that were accidentally left in sites-enabled/
+# by previous deployments. Nginx loads all files in this directory and a
+# leftover backup defines a duplicate upstream, failing the config test.
+sudo rm -f /etc/nginx/sites-enabled/fieldtrack.conf.bak.*
 
 echo "[6/7] Validating and reloading nginx..."
 
