@@ -19,7 +19,7 @@ The rollback system provides instant production recovery by redeploying previous
 │                    Deployment Flow                          │
 └─────────────────────────────────────────────────────────────┘
 
-1. CI builds image → ghcr.io/rajashish147/fieldtrack-backend:a4f91c2
+1. CI builds image → ghcr.io/fieldtrack-tech/fieldtrack-backend:a4f91c2
 2. Deploy script pulls image and performs blue-green deployment
 3. After successful deployment → prepends "a4f91c2" to .deploy_history
 4. History maintains last 5 deployments
@@ -245,7 +245,7 @@ Cannot rollback - this is the first or only deployment.
 ### Image Not Found in Registry
 
 ```
-Error response from daemon: manifest for ghcr.io/rajashish147/fieldtrack-backend:abc123 not found
+Error response from daemon: manifest for ghcr.io/fieldtrack-tech/fieldtrack-backend:abc123 not found
 ```
 
 **Solution:** Verify the image SHA exists in GitHub Container Registry.

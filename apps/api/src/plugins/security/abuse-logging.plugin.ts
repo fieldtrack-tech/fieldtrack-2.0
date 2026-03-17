@@ -66,7 +66,7 @@ const abuseLoggingPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) 
                 "Brute-force protection triggered",
             );
 
-            securityAuthBruteforce.labels(ip).inc();
+            securityAuthBruteforce.inc();
         }
     });
 

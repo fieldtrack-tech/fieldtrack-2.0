@@ -28,6 +28,11 @@ const nextConfig = {
   transpilePackages: ["mapbox-gl", "@fieldtrack/types"],
   images: {
     domains: [],
+    // Mitigate GHSA-3x4c-7xq6-9pq8 (unbounded Next.js image disk cache growth).
+    // Limit format variants and enforce TTL so stale image cache entries expire.
+    // Full fix: upgrade to next@>=16.1.7 when breaking changes are reviewed.
+    formats: ["image/webp"],
+    minimumCacheTTL: 3600,
   },
   async headers() {
     return [

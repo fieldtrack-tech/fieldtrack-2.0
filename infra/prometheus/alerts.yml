@@ -146,3 +146,28 @@ groups:
     annotations:
       summary: "Readiness check failing"
       description: "/ready endpoint has been failing for 3 minutes. Check DB, Redis, and Supabase connectivity."
+
+# ---------------------------------------------------------
+# TLS CERTIFICATE ALERTS
+# ---------------------------------------------------------
+
+- name: fieldtrack_tls_alerts
+  rules:
+
+  - alert: TLSCertExpiringSoon
+    expr: probe_ssl_earliest_cert_expiry{job="fieldtrack-readiness"} - time() < 14 * 24 * 3600
+    for: 1h
+    labels:
+      severity: warning
+    annotations:
+      summary: "TLS certificate expiring within 14 days"
+      description: "Certificate for {{ $labels.instance }} expires in less than 14 days. Renew via certbot."
+
+  - alert: TLSCertExpired
+    expr: probe_ssl_earliest_cert_expiry{job="fieldtrack-readiness"} - time() < 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "TLS certificate has expired"
+      description: "Certificate for {{ $labels.instance }} has expired. All HTTPS traffic is failing."

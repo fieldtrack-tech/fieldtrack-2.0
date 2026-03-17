@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-IMAGE="ghcr.io/rajashish147/fieldtrack-backend:${1:-latest}"
+IMAGE="ghcr.io/fieldtrack-tech/fieldtrack-backend:${1:-latest}"
 IMAGE_SHA="${1:-latest}"
 
 BLUE_NAME="backend-blue"

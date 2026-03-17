@@ -68,3 +68,25 @@ scrape_configs:
     static_configs:
       - targets:
           - "localhost:9090"
+
+  # ── Blackbox: readiness probe + TLS certificate monitoring ──────────────────
+  # probe_success{job="fieldtrack-readiness"} → used by ReadinessCheckFailing alert.
+  # probe_ssl_earliest_cert_expiry → used by TLSCertExpiringSoon/TLSCertExpired alerts.
+  - job_name: "fieldtrack-readiness"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    scrape_interval: 60s
+    static_configs:
+      - targets:
+          - "https://${API_DOMAIN}/ready"
+        labels:
+          app: "fieldtrack"
+          component: "tls"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: "blackbox:9115"
+      - source_labels: [__param_target]
+        target_label: instance
