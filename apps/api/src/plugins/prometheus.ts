@@ -201,8 +201,8 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     // Require a shared secret token when one is configured.
     // In development (token undefined) the endpoint remains open.
     if (env.METRICS_SCRAPE_TOKEN !== undefined) {
-      const token = request.headers["x-metrics-token"];
-      if (token !== env.METRICS_SCRAPE_TOKEN) {
+      const authHeader = request.headers["authorization"];
+      if (authHeader !== `Bearer ${env.METRICS_SCRAPE_TOKEN}`) {
         await reply.status(401).send("Unauthorized");
         return;
       }

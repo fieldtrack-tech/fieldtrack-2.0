@@ -25,9 +25,8 @@ scrape_configs:
     scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4]
     metrics_path: /metrics
     scrape_interval: 15s
-    http_config:
-      headers:
-        x-metrics-token: ${METRICS_SCRAPE_TOKEN}
+    authorization:
+      credentials: ${METRICS_SCRAPE_TOKEN}
     static_configs:
       - targets:
           - "backend-blue:3000"
@@ -42,9 +41,8 @@ scrape_configs:
     scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4]
     metrics_path: /metrics
     scrape_interval: 15s
-    http_config:
-      headers:
-        x-metrics-token: ${METRICS_SCRAPE_TOKEN}
+    authorization:
+      credentials: ${METRICS_SCRAPE_TOKEN}
     static_configs:
       - targets:
           - "backend-green:3000"
