@@ -1,0 +1,21 @@
+# FieldTrack 2.0 — Blackbox Exporter Configuration
+#
+# Modules used by Prometheus scrape jobs (see prometheus.yml).
+#   fieldtrack-readiness: probes HTTPS /ready, also exposes TLS cert expiry metrics.
+
+modules:
+
+  # HTTP probe used for readiness check and TLS certificate monitoring.
+  # probe_success == 1 when /ready returns HTTP 200.
+  # probe_ssl_earliest_cert_expiry exposes the TLS certificate expiry timestamp.
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      method: GET
+      tls_config:
+        insecure_skip_verify: false
+      preferred_ip_protocol: "ip4"
+      ip_protocol_fallback: false

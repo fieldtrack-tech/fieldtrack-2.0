@@ -69,8 +69,9 @@ services:
     ports:
       - "127.0.0.1:9090:9090"
     environment:
-      # Passed through to prometheus.yml for scrape authentication
+      # Passed through to prometheus.yml for scrape authentication and probe targets
       - METRICS_SCRAPE_TOKEN=${METRICS_SCRAPE_TOKEN}
+      - API_DOMAIN=${API_DOMAIN}
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
@@ -137,6 +138,34 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox
+    restart: unless-stopped
+    expose:
+      - "9115"
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    command:
+      - "--config.file=/etc/blackbox/blackbox.yml"
+    networks:
+      - fieldtrack_network
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:9115/-/healthy" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   node-exporter:
     image: prom/node-exporter:v1.8.1

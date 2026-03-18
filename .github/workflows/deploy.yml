@@ -202,21 +202,22 @@ jobs:
           file: ./apps/api/Dockerfile
           push: true
           tags: |
-            ghcr.io/rajashish147/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
-            ghcr.io/rajashish147/fieldtrack-backend:latest
+            ghcr.io/fieldtrack-tech/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
+            ghcr.io/fieldtrack-tech/fieldtrack-backend:latest
           # GHA layer cache — dramatically speeds up rebuilds when deps unchanged
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Container vulnerability scan
+        id: trivy
         uses: aquasecurity/trivy-action@0.30.0
-        continue-on-error: true  # Don't block deployment on Trivy download issues
+        continue-on-error: true  # Tolerate transient Trivy runner/download failures
         with:
-          image-ref: ghcr.io/rajashish147/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
+          image-ref: ghcr.io/fieldtrack-tech/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'HIGH,CRITICAL'
-          exit-code: '1'
+          exit-code: '0'  # Gate is enforced in the step below; Trivy itself always exits 0
 
       - name: Upload Trivy scan results
         if: always()
@@ -225,10 +226,24 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
+      - name: Block deployment on HIGH/CRITICAL vulnerabilities
+        run: |
+          if [ ! -f trivy-results.sarif ]; then
+            echo "Trivy scan did not produce results (runner failure). Deployment allowed."
+            exit 0
+          fi
+          VULN_COUNT=$(jq '[.runs[].results[]] | length' trivy-results.sarif 2>/dev/null || echo "0")
+          if [ "${VULN_COUNT}" -gt "0" ]; then
+            echo "::error::${VULN_COUNT} HIGH/CRITICAL vulnerabilities found in container image. Deployment blocked."
+            jq -r '.runs[].results[] | "  \(.ruleId): \(.message.text | split("\n")[0])"' trivy-results.sarif 2>/dev/null || true
+            exit 1
+          fi
+          echo "Vulnerability scan passed — no HIGH/CRITICAL findings."
+
       - name: Generate SBOM
         uses: anchore/sbom-action@v0.17.2
         with:
-          image: ghcr.io/rajashish147/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
+          image: ghcr.io/fieldtrack-tech/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
           format: cyclonedx-json
           output-file: sbom.cyclonedx.json
 

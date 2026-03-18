@@ -52,9 +52,9 @@ echo ""
 
 # Validate that the rollback image exists in the registry
 echo "Validating rollback image exists..."
-if ! docker manifest inspect "ghcr.io/rajashish147/fieldtrack-backend:$PREVIOUS_SHA" >/dev/null 2>&1; then
+if ! docker manifest inspect "ghcr.io/fieldtrack-tech/fieldtrack-backend:$PREVIOUS_SHA" >/dev/null 2>&1; then
     echo "ERROR: Rollback image not found in registry."
-    echo "Image: ghcr.io/rajashish147/fieldtrack-backend:$PREVIOUS_SHA"
+    echo "Image: ghcr.io/fieldtrack-tech/fieldtrack-backend:$PREVIOUS_SHA"
     echo "Cannot proceed with rollback to non-existent image."
     exit 1
 fi

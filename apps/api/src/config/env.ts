@@ -107,3 +107,12 @@ if (env.NODE_ENV === "production" && !env.METRICS_SCRAPE_TOKEN) {
     "METRICS_SCRAPE_TOKEN must be set in production to protect /metrics endpoint"
   );
 }
+
+// Production safety check: ALLOWED_ORIGINS must be set
+// An empty ALLOWED_ORIGINS causes the CORS plugin to fall back to `origin: true`,
+// which allows all origins and opens the API to cross-site credential abuse.
+if (env.NODE_ENV === "production" && env.ALLOWED_ORIGINS.length === 0) {
+  throw new Error(
+    "ALLOWED_ORIGINS must be set in production to prevent cross-origin credential abuse"
+  );
+}

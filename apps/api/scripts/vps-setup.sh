@@ -22,11 +22,11 @@ set -euo pipefail
 # ── Configuration (EDIT THESE) ─────────────────────────────────────────────────
 DOMAIN="api.fieldtrack.meowsician.tech"     # Production API domain
 FRONTEND_DOMAIN="fieldtrack.meowsician.tech" # Production frontend domain
-GH_USER="rajashish147"                      # GitHub username
+GH_USER="fieldtrack-tech"                    # GitHub org name
 GH_PAT=""                                   # GitHub Personal Access Token (packages:read)
 DEPLOY_USER="ashish"                        # Non-root user for deployment
 DEPLOY_USER_SSH_PUBLIC_KEY=""               # Required public key for deploy user (ssh-ed25519 ...)
-REPO_URL="https://github.com/rajashish147/FieldTrack-2.0.git"
+REPO_URL="https://github.com/fieldtrack-tech/fieldtrack-2.0.git"
 REPO_DIR="/home/${DEPLOY_USER}/FieldTrack-2.0"
 NETWORK="fieldtrack_network"
 NGINX_SITE_LINK="/etc/nginx/conf.d/fieldtrack.conf"
@@ -362,7 +362,7 @@ log "Monitoring stack started (Prometheus, Grafana, Node Exporter)"
 log "Phase 15: Pulling and starting initial backend container..."
 
 # Pull the latest image
-sudo -u "$DEPLOY_USER" docker pull ghcr.io/rajashish147/fieldtrack-backend:latest
+sudo -u "$DEPLOY_USER" docker pull ghcr.io/fieldtrack-tech/fieldtrack-backend:latest
 
 # Start the blue container as initial deployment
 if [ -f "$ENV_FILE" ] && grep -q "SUPABASE_URL=your-" "$ENV_FILE"; then
@@ -376,7 +376,7 @@ else
         -p "127.0.0.1:3001:3000" \
         --restart unless-stopped \
         --env-file "$ENV_FILE" \
-        ghcr.io/rajashish147/fieldtrack-backend:latest
+        ghcr.io/fieldtrack-tech/fieldtrack-backend:latest
 
     log "Backend container (backend-blue) started on 127.0.0.1:3001."
 fi

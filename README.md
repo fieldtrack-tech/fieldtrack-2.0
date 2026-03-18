@@ -2,7 +2,7 @@
 
 > Production-grade multi-tenant backend for real-time field workforce tracking — attendance, GPS, expense management, and admin analytics.
 
-[![CI](https://github.com/rajashish147/FieldTrack-2.0/actions/workflows/deploy.yml/badge.svg)](https://github.com/rajashish147/FieldTrack-2.0/actions/workflows/deploy.yml)
+[![CI](https://github.com/fieldtrack-tech/fieldtrack-2.0/actions/workflows/deploy.yml/badge.svg)](https://github.com/fieldtrack-tech/fieldtrack-2.0/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org)
@@ -176,6 +176,30 @@ FieldTrack-2.0/
 
 ---
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, branch naming conventions, and commit format.
+
+**Branch naming:**
+```
+feature/<description>   # new functionality
+fix/<description>       # bug fixes
+infra/<description>     # infrastructure changes
+docs/<description>      # documentation
+test/<description>      # test additions
+chore/<description>     # maintenance / deps
+```
+
+**Commit format:**
+```
+type(scope): short imperative description
+```
+Allowed types: `feat` `fix` `refactor` `ci` `infra` `docs` `test` `chore`
+
+All PRs require review from CODEOWNERS and must pass CI before merge.
+
+---
+
 ## License
 
-[MIT](LICENSE) © 2026 Ashish Raj
+[MIT](LICENSE) © 2026 FieldTrack

@@ -83,7 +83,7 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
         },
         license: {
           name: "MIT",
-          url: "https://github.com/rajashish147/FieldTrack-2.0/blob/master/LICENSE",
+          url: "https://github.com/fieldtrack-tech/fieldtrack-2.0/blob/master/LICENSE",
         },
       },
       servers: [
@@ -235,7 +235,7 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
       },
       security: [{ BearerAuth: [] }],
       externalDocs: {
-        url: "https://github.com/rajashish147/FieldTrack-2.0",
+        url: "https://github.com/fieldtrack-tech/fieldtrack-2.0",
         description: "Find more info here",
       },
     },

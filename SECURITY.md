@@ -17,7 +17,7 @@ Only the current `master` branch receives security fixes.
 
 Please report security issues privately by emailing:
 
-> **rajashish147 [at] gmail.com**
+> **fieldtrack-tech [at] gmail.com**
 
 Include in your report:
 

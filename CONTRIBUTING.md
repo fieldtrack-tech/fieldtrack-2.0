@@ -1,67 +1,93 @@
 # Contributing to FieldTrack 2.0
 
-Thank you for your interest in contributing. This document explains the workflow for submitting changes.
+---
+
+## Setup
+
+**Prerequisites:** Node.js ≥ 24, npm, Redis
+
+```bash
+git clone https://github.com/fieldtrack-tech/fieldtrack-2.0.git
+cd fieldtrack-2.0
+
+npm install
+cp apps/api/.env.example apps/api/.env
+# Edit apps/api/.env — fill in Supabase URL, keys, Redis URL, ALLOWED_ORIGINS
+```
 
 ---
 
-## Getting Started
+## Branch Naming
 
-### Prerequisites
+| Purpose | Pattern | Example |
+|---------|---------|---------|
+| New feature | `feature/<description>` | `feature/expense-attachments` |
+| Bug fix | `fix/<description>` | `fix/session-double-close` |
+| Infrastructure | `infra/<description>` | `infra/add-redis-tls` |
+| Documentation | `docs/<description>` | `docs/update-api-reference` |
+| Tests | `test/<description>` | `test/analytics-edge-cases` |
+| Chores / deps | `chore/<description>` | `chore/bump-fastify-5` |
 
-- Node.js ≥ 24
-- npm
-- Redis (for integration tests that use BullMQ)
-- A Supabase project (for full integration runs) — test suite mocks the DB layer so Supabase is not required for unit tests
+All PRs target `master`. `master` is protected — CI must pass before merge.
 
-### Setup
+---
 
-```bash
-# Clone the repository
-git clone https://github.com/rajashish147/FieldTrack-2.0.git
-cd FieldTrack-2.0/backend
+## Commit Format
 
-# Install dependencies
-npm install
+```
+type(scope): short imperative description
+```
 
-# Copy and configure env
-cp .env.example .env
-# Edit .env with your Supabase and Redis credentials
+**Allowed types:**
+
+| Type | When to use |
+|------|-------------|
+| `feat` | New user-facing functionality |
+| `fix` | Bug fix |
+| `refactor` | Internal code change — no behaviour change |
+| `ci` | CI/CD workflow changes |
+| `infra` | Infrastructure, Docker, nginx, monitoring |
+| `docs` | Documentation only |
+| `test` | Adding or updating tests |
+| `chore` | Dependency bumps, tooling, housekeeping |
+
+**Scope** should be the module or layer affected (e.g. `auth`, `expenses`, `analytics`, `deploy`, `worker`, `rls`).
+
+**Examples:**
+
+```
+feat(expenses): add bulk-approve endpoint for admins
+fix(auth): handle missing organization_id claim in JWT
+refactor(analytics): replace read-then-upsert with atomic RPC calls
+ci(deploy): add SARIF-based Trivy gate before image push
+infra(nginx): block /docs and /openapi.json in production
+docs(deployment): document blue-green rollback procedure
+test(attendance): cover double-checkout edge case
+chore(deps): bump @fastify/jwt to 9.1.0
 ```
 
 ---
 
 ## Development Workflow
 
-### Branching
-
-- `master` — production branch; protected, requires passing CI
-- Feature branches: `feat/<short-description>`
-- Bug fixes: `fix/<short-description>`
-- Documentation: `docs/<short-description>`
-
 ### Making Changes
 
 1. Branch off `master`:
    ```bash
-   git checkout -b feat/your-feature-name
+   git checkout -b feature/your-feature-name
    ```
 
 2. Make your changes following the existing code conventions (TypeScript strict mode, ESM imports, Fastify patterns).
 
 3. Run the test suite and type-checker before committing:
    ```bash
-   # From the backend/ directory
-   npx tsc --noEmit
-   npm run test
+   npm run typecheck -w apps/api
+   npm run test -w apps/api
+   npm run type-check -w apps/web   # if frontend changed
+   npm run build -w apps/web        # if frontend changed
    ```
 
-4. Commit with a conventional commit message:
-   ```
-   feat(module): short description of change
-   fix(auth): handle missing organization_id claim
-   docs(readme): update deployment instructions
-   chore(deps): bump fastify to 5.x
-   ```
+4. Commit with a conventional commit message (see format above).
 
 5. Push your branch and open a pull request against `master`.
 

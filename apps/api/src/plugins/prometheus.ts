@@ -58,12 +58,14 @@ export const securityRateLimitHits = new client.Counter({
 /**
  * Incremented every time an auth endpoint (e.g. login) is rate-limited,
  * indicating a possible brute-force attack attempt.
- * Labelled by ip to surface the source of repeated attempts.
+ *
+ * NOTE: intentionally *no* IP label — per-IP labeling creates unbounded
+ * cardinality under DDoS (thousands of unique IPs → thousands of time series
+ * → Prometheus OOM). Use Loki log queries to correlate bruteforce IPs.
  */
 export const securityAuthBruteforce = new client.Counter({
   name: "security_auth_bruteforce_total",
   help: "Total number of auth endpoint requests blocked by rate limiting (brute-force signal)",
-  labelNames: ["ip"],
   registers: [register],
 });
 
