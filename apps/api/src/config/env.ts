@@ -26,6 +26,7 @@
 
 import { z } from "zod";
 import dotenv from "dotenv";
+import { createHash } from "crypto";
 import { normalizeUrl } from "../utils/url.js";
 
 // Load .env file — no-op in Docker where env vars are injected at runtime.
@@ -563,6 +564,25 @@ interface MinimalLogger {
  * @param logger - Any logger with an `info(obj, msg)` method (e.g. app.log).
  */
 export function logStartupConfig(logger: MinimalLogger): void {
+  // Config hash — a short fingerprint of all deployment-identity values.
+  // Log this on every boot so mismatches between replicas are immediately
+  // visible in Grafana without diffing individual fields.
+  const configHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        configVersion: env.CONFIG_VERSION,
+        appEnv:        env.APP_ENV,
+        port:          env.PORT,
+        appBaseUrl:    env.APP_BASE_URL      ?? "",
+        apiBaseUrl:    env.API_BASE_URL      ?? "",
+        frontendUrl:   env.FRONTEND_BASE_URL ?? "",
+        serviceName:   env.SERVICE_NAME,
+        corsOrigin:    env.CORS_ORIGIN,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 12);
+
   logger.info(
     {
       // ── Identity ───────────────────────────────────────────────────────────
@@ -580,7 +600,32 @@ export function logStartupConfig(logger: MinimalLogger): void {
       // ── Operational ───────────────────────────────────────────────────────
       corsOrigin:    env.CORS_ORIGIN || "(unset — dev origins active)",
       tempoEndpoint: env.TEMPO_ENDPOINT,
+
+      // ── Drift detection ───────────────────────────────────────────────────
+      // Compare this value across all replicas in Grafana/Loki.  If two
+      // running instances show different hashes, their configs have drifted.
+      configHash,
     },
     "startup:config",
   );
+
+  // Domain pattern warning — surfaces misconfigured deployments (e.g.
+  // a staging URL accidentally used in production) without blocking startup.
+  // Only fires when APP_ENV=production so local/staging noise is suppressed.
+  if (env.APP_ENV === "production" && env.API_BASE_URL) {
+    const knownProdPattern = /^https:\/\/[^/]+\.[^/]+/;
+    const isHttp = env.API_BASE_URL.startsWith("http://");
+    const isLocalhost = env.API_BASE_URL.includes("localhost") || env.API_BASE_URL.includes("127.0.0.1");
+    if (isHttp || isLocalhost || !knownProdPattern.test(env.API_BASE_URL)) {
+      logger.info(
+        {
+          apiBaseUrl: env.API_BASE_URL,
+          warning:
+            "API_BASE_URL does not look like a production HTTPS URL. " +
+            "Verify this is intentional before serving real traffic.",
+        },
+        "startup:config:warning",
+      );
+    }
+  }
 }
