@@ -595,6 +595,9 @@ export function logStartupConfig(logger: MinimalLogger): void {
       // ── URLs (safe — no credentials) ──────────────────────────────────────
       appBaseUrl:      env.APP_BASE_URL      ?? "(unset)",
       apiBaseUrl:      env.API_BASE_URL      ?? "(unset)",
+      // Bare hostname derived from apiBaseUrl — matches the API_HOSTNAME used
+      // by nginx, Prometheus, and infra scripts. Useful for cross-checking logs.
+      apiHostname:     env.API_BASE_URL      ? new URL(env.API_BASE_URL).host : "(unset)",
       frontendBaseUrl: env.FRONTEND_BASE_URL ?? "(unset)",
 
       // ── Operational ───────────────────────────────────────────────────────

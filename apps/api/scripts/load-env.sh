@@ -68,6 +68,18 @@ echo "✓ CORS_ORIGIN is set"
 API_HOSTNAME="${API_BASE_URL#https://}"
 API_HOSTNAME="${API_HOSTNAME#http://}"
 API_HOSTNAME="${API_HOSTNAME%%/*}"
+
+# Validate: result must be a non-empty bare hostname (or host:port).
+# Reject if it contains whitespace, path separators, credential markers (@),
+# or query/fragment characters — any of these indicate a malformed API_BASE_URL.
+if [ -z "$API_HOSTNAME" ] || printf '%s' "$API_HOSTNAME" | grep -qE '[[:space:]/@?#]'; then
+    echo "❌ Invalid API_HOSTNAME derived from API_BASE_URL='$API_BASE_URL'"
+    echo "   Expected a bare hostname or host:port — e.g.: api.example.com"
+    echo "   Got: '$API_HOSTNAME'"
+    echo "   Check that API_BASE_URL has no embedded credentials, spaces, or bare paths."
+    exit 1
+fi
+
 export API_HOSTNAME
 echo "✓ API_HOSTNAME: $API_HOSTNAME"
 

@@ -138,8 +138,9 @@ else
 
     if [[ -z "$DERIVED_HOSTNAME" ]]; then
         fail "Cannot derive API_HOSTNAME from API_BASE_URL='$API_BASE_URL'"
-    elif [[ "$DERIVED_HOSTNAME" =~ [[:space:]] ]] || [[ "$DERIVED_HOSTNAME" == */* ]]; then
+    elif [[ "$DERIVED_HOSTNAME" =~ [[:space:]/@?#] ]]; then
         fail "Derived API_HOSTNAME contains invalid characters: '$DERIVED_HOSTNAME'"
+        fail "  API_BASE_URL must not contain credentials (@), embedded paths (/), or query strings (?#)"
     elif [[ ! "$DERIVED_HOSTNAME" =~ \. ]]; then
         warn "API_HOSTNAME '$DERIVED_HOSTNAME' has no dot — OK for localhost only"
     else

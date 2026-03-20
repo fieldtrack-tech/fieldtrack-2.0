@@ -40,41 +40,24 @@ HEALTH_INTERVAL=3
 echo "✓ API_HOSTNAME: $API_HOSTNAME"
 
 # ---------------------------------------------------------------------------
-# Pre-flight: validate METRICS_SCRAPE_TOKEN consistency.
-# The token must match between API and Prometheus or scraping will silently
-# fail and alerts will go blind. Fail fast here instead of deploying broken
-# monitoring.
+# Pre-flight: full env contract validation.
+# Covers required vars, API_BASE_URL format, API_HOSTNAME derivation, and
+# METRICS_SCRAPE_TOKEN alignment between apps/api/.env and infra/.env.monitoring.
+# Temporarily disable trace so token values are not echoed to the log.
+# validate-env.sh exits non-zero on any failure — set -e aborts the deploy here.
 # ---------------------------------------------------------------------------
-MONITORING_ENV_FILE="$REPO_DIR/infra/.env.monitoring"
-if [ -f "$MONITORING_ENV_FILE" ]; then
-    API_TOKEN=$(grep -E '^METRICS_SCRAPE_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "")
-    PROM_TOKEN=$(grep -E '^METRICS_SCRAPE_TOKEN=' "$MONITORING_ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "")
-    
-    if [ -n "$API_TOKEN" ] && [ -n "$PROM_TOKEN" ] && [ "$API_TOKEN" != "$PROM_TOKEN" ]; then
-        echo "ERROR: METRICS_SCRAPE_TOKEN mismatch detected!"
-        echo "  API token:        $ENV_FILE"
-        echo "  Prometheus token: $MONITORING_ENV_FILE"
-        echo ""
-        echo "These must be identical or Prometheus scraping will fail silently."
-        echo "Update both files with the same token value."
-        exit 1
-    fi
-    
-    if [ -n "$API_TOKEN" ] && [ -z "$PROM_TOKEN" ]; then
-        echo "WARNING: METRICS_SCRAPE_TOKEN set in API but not in Prometheus config."
-        echo "Prometheus will fail to scrape metrics. Update $MONITORING_ENV_FILE"
-    fi
-fi
+echo "--- Pre-flight: env contract validation ---"
+{ set +x; "$SCRIPT_DIR/validate-env.sh" --check-monitoring; set -x; }
 
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
 echo "========================================="
 echo "Image SHA: $IMAGE_SHA"
 
-echo "[1/7] Pulling image..."
+echo "[1/8] Pulling image..."
 docker pull "$IMAGE"
 
-echo "[2/7] Detecting active container..."
+echo "[2/8] Detecting active container..."
 
 # Read active slot from state file (first deploy defaults to green → blue becomes inactive)
 if [ -f "$ACTIVE_SLOT_FILE" ] && [ "$(cat "$ACTIVE_SLOT_FILE")" = "blue" ]; then
@@ -98,7 +81,7 @@ fi
 echo "Active container   : $ACTIVE ($ACTIVE_PORT)"
 echo "Inactive container : $INACTIVE ($INACTIVE_PORT)"
 
-echo "[3/7] Starting inactive container..."
+echo "[3/8] Starting inactive container..."
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
     docker rm -f "$INACTIVE_NAME"
@@ -112,7 +95,7 @@ docker run -d \
   --env-file "$ENV_FILE" \
   "$IMAGE"
 
-echo "[4/7] Waiting for readiness check..."
+echo "[4/8] Waiting for readiness check..."
 
 # Give the server a moment to boot
 sleep 5
@@ -151,7 +134,7 @@ done
 
 echo "Readiness check passed."
 
-echo "[5/7] Switching nginx upstream..."
+echo "[5/8] Switching nginx upstream..."
 
 # Backup goes to /etc/nginx/ (not sites-enabled/) so nginx does not load it
 # during validation and trigger a duplicate-upstream error.
@@ -177,7 +160,7 @@ rm -f "$NGINX_TMP"
 # leftover backup defines a duplicate upstream, failing the config test.
 sudo rm -f /etc/nginx/sites-enabled/fieldtrack.conf.bak.*
 
-echo "[6/7] Validating and reloading nginx..."
+echo "[6/8] Validating and reloading nginx..."
 
 if ! sudo nginx -t 2>&1; then
     echo "ERROR: nginx configuration test failed. Restoring backup..."
@@ -191,7 +174,54 @@ sudo systemctl reload nginx
 # Persist new active slot so the next deploy reads it correctly
 echo "$INACTIVE" > "$ACTIVE_SLOT_FILE"
 
-echo "[7/7] Cleaning old container..."
+echo "[7/8] Post-deploy public health check..."
+
+# Brief settle time — nginx needs a moment to apply the new upstream config
+# before forwarding connections cleanly.
+sleep 3
+_PUBLIC_HEALTH_URL="https://$API_HOSTNAME/health"
+echo "  Probing: $_PUBLIC_HEALTH_URL"
+_PUBLIC_CHECK_PASSED=false
+for _attempt in 1 2 3; do
+    if curl --max-time 10 -fsS "$_PUBLIC_HEALTH_URL" >/dev/null 2>&1; then
+        _PUBLIC_CHECK_PASSED=true
+        break
+    fi
+    echo "  Attempt $_attempt/3 failed — waiting 5s..."
+    sleep 5
+done
+
+if [ "$_PUBLIC_CHECK_PASSED" != "true" ]; then
+    echo "❌ POST-DEPLOY PUBLIC HEALTH CHECK FAILED: $_PUBLIC_HEALTH_URL"
+    echo "   Container passed internal readiness but is not reachable publicly."
+    echo "   Possible causes: TLS cert, DNS, nginx upstream config, firewall."
+    echo ""
+    echo "   Restoring previous nginx config and slot..."
+    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+    if sudo nginx -t 2>&1 && sudo systemctl reload nginx; then
+        echo "   ✓ Previous nginx config restored."
+    else
+        echo "   ⚠ Could not restore nginx config automatically — check manually."
+    fi
+    echo "$ACTIVE" > "$ACTIVE_SLOT_FILE"
+    docker rm -f "$INACTIVE_NAME" || true
+    # Auto-rollback to previous image — but only if this deploy is not itself
+    # an auto-rollback, to prevent an infinite loop:
+    #   deploy → fail → rollback.sh → deploy(prev) → fail → (stop here)
+    if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
+        echo ""
+        echo "Triggering automatic rollback to previous stable image..."
+        export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+        "$SCRIPT_DIR/rollback.sh" --auto || true
+    else
+        echo "Already in rollback sequence — stopping without recursive rollback."
+    fi
+    exit 1
+fi
+unset _PUBLIC_HEALTH_URL _PUBLIC_CHECK_PASSED _attempt
+echo "✓ Public health check passed."
+
+echo "[8/8] Cleaning old container..."
 
 docker rm -f "$ACTIVE_NAME" || true
 
