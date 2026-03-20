@@ -20,7 +20,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Deployment root must be explicitly defined
 DEPLOY_USER="${DEPLOY_USER:-$(whoami)}"
-DEPLOY_ROOT="${DEPLOY_ROOT:-}"
+# Fallback to default path if not set (prevents SSH context issues)
+DEPLOY_ROOT="${DEPLOY_ROOT:-/home/ashish/FieldTrack-2.0}"
 
 if [ -z "$DEPLOY_ROOT" ]; then
     echo "ERROR: DEPLOY_ROOT environment variable must be set."

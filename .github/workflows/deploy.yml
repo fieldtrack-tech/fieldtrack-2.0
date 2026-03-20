@@ -513,7 +513,7 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
             ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
@@ -681,7 +681,7 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
             chmod +x apps/api/scripts/rollback.sh
             ./apps/api/scripts/rollback.sh --auto
