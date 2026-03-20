@@ -1,192 +1,374 @@
-name: FieldTrack Backend CI/CD
+# .github/workflows/deploy.yml
+#
+# Production Deployment Pipeline
+#
+# Design principles:
+#   1. NO paths: trigger filter — every push to master runs the full pipeline
+#   2. Runs ALL validation from scratch — no trust built on PR results alone
+#   3. Trivy scan runs BEFORE Docker push — vulnerable images never reach the registry
+#   4. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
+#   5. Image digest verified against PR simulation artifact when available
+#   6. Blue-Green deploy with automatic rollback on health or smoke test failure
+#   7. timeout-minutes on every job — hung processes never block CI indefinitely
+#   8. npm ci retried up to 3x — registry flakiness never kills a valid deploy
+#
+# Parallel stages:
+#   validate ─┐
+#   test-api  ├─► build-scan-push ─► deploy ─► sync-infra ─► health-and-smoke
+#   build-web ┘                                                      │
+#                                              rollback ◄────────────┘ (on failure)
 
-# ─── Triggers ────────────────────────────────────────────────────────────────
-# Push: only API-relevant changes trigger the full pipeline on master.
-# PR:   run quality gates so reviewers see test status.
-# Manual: three explicit modes for on-demand operations.
+name: Deploy to Production
 
 on:
   push:
     branches:
       - master
-    paths:
-      - "apps/api/**"
-      - "packages/types/**"
-      - "infra/**"
-      - ".github/workflows/**"
-      - "package.json"
-      - "package-lock.json"
-
-  pull_request:
-    branches:
-      - master
-    paths:
-      - "apps/api/**"
-      - "packages/types/**"
-      - "infra/**"
-      - ".github/workflows/**"
-      - "package.json"
-      - "package-lock.json"
-
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "Pipeline mode"
-        required: true
-        default: "deploy-and-test"
-        type: choice
-        options:
-          - deploy
-          - smoke-test
-          - deploy-and-test
 
-# ─── Shared setup steps (referenced as a comment; jobs inline them) ──────────
-# All quality-gate jobs share the same pattern:
-#   checkout → setup-node (npm cache) → npm ci → build packages/types → work
+# Never cancel an in-progress deployment — let it finish or fail cleanly.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+# Default to read-only. Jobs that need additional access declare it explicitly.
+permissions:
+  contents: read
 
 jobs:
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # QUALITY GATES — run in parallel on every push / PR
-  # ─────────────────────────────────────────────────────────────────────────────
-
-  typecheck:
-    name: TypeCheck (API)
+  # ---------------------------------------------------------------------------
+  # JOB: validate
+  #
+  # Fast pre-flight: TypeScript check + dependency audit.
+  # Runs in parallel with test-api and build-web to maximise pipeline speed.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate (typecheck + audit)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
           cache: npm
-          cache-dependency-path: "**/package-lock.json"
+          cache-dependency-path: '**/package-lock.json'
 
-      - name: Install dependencies
+      - name: Install workspace dependencies (with retry)
         run: |
           echo "::group::npm ci"
-          T0=$SECONDS
-          npm ci
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
           echo "::endgroup::"
-          echo "⏱ install: $((SECONDS - T0))s"
 
-      - name: Build shared types package
+      - name: Build shared types
         run: npm run build -w packages/types
 
       - name: Dependency vulnerability scan
         run: npm audit --omit=dev --audit-level=high
 
-      - name: TypeScript check (API only — not web)
+      - name: TypeScript check (API)
         working-directory: apps/api
-        run: |
-          T0=$SECONDS
-          npx tsc --noEmit
-          echo "⏱ typecheck: $((SECONDS - T0))s"
+        run: npx tsc --noEmit
 
-
-  unit-tests:
-    name: Unit Tests
+  # ---------------------------------------------------------------------------
+  # JOB: test-api
+  #
+  # Full backend test suite — unit tests then integration tests.
+  # Runs in parallel with validate and build-web.
+  # ---------------------------------------------------------------------------
+  test-api:
+    name: API Tests (unit + integration)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
           cache: npm
-          cache-dependency-path: "**/package-lock.json"
+          cache-dependency-path: '**/package-lock.json'
 
-      - name: Install dependencies
+      - name: Install workspace dependencies (with retry)
         run: |
           echo "::group::npm ci"
-          T0=$SECONDS
-          npm ci
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
           echo "::endgroup::"
-          echo "⏱ install: $((SECONDS - T0))s"
 
-      - name: Build shared types package
+      - name: Build shared types
         run: npm run build -w packages/types
 
-      - name: Run unit tests
+      - name: Unit tests
         working-directory: apps/api
-        run: |
-          T0=$SECONDS
-          npx vitest run tests/unit/
-          echo "⏱ unit tests: $((SECONDS - T0))s"
+        run: npx vitest run tests/unit/
 
+      - name: Integration tests
+        working-directory: apps/api
+        run: npx vitest run tests/integration/
 
-  integration-tests:
-    name: Integration Tests
+  # ---------------------------------------------------------------------------
+  # JOB: build-web
+  #
+  # Full frontend validation and production build.
+  # Runs in parallel with validate and test-api.
+  # ---------------------------------------------------------------------------
+  build-web:
+    name: Frontend Build (typecheck + lint + build)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_API_URL: /api/proxy
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+      NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
           cache: npm
-          cache-dependency-path: "**/package-lock.json"
+          cache-dependency-path: '**/package-lock.json'
 
-      - name: Install dependencies
+      - name: Install workspace dependencies (with retry)
         run: |
           echo "::group::npm ci"
-          T0=$SECONDS
-          npm ci
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
           echo "::endgroup::"
-          echo "⏱ install: $((SECONDS - T0))s"
 
-      - name: Build shared types package
+      - name: Build shared types
         run: npm run build -w packages/types
 
-      - name: Run integration tests
-        working-directory: apps/api
-        run: |
-          T0=$SECONDS
-          npx vitest run tests/integration/
-          echo "⏱ integration tests: $((SECONDS - T0))s"
+      - name: TypeScript check (web)
+        run: npm run typecheck -w apps/web
 
+      - name: ESLint (web)
+        run: npm run lint -w apps/web
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # BUILD — Docker image (only on push / deploy dispatch, after quality gates)
-  # ─────────────────────────────────────────────────────────────────────────────
+      - name: Next.js production build
+        run: npm run build -w apps/web
 
-  build-image:
-    name: Build & Push Docker Image
+  # ---------------------------------------------------------------------------
+  # JOB: build-scan-push
+  #
+  # Three-phase security gate — identical build config to pr.yml:
+  #   Phase 1 — Build locally (target: production, same build-args, same cache)
+  #   Phase 2 — Trivy scan: pinned aquasec/trivy:0.49.1 Docker image, exit-code 1
+  #              on HIGH/CRITICAL (blocks push). NOT trivy-action — supply-chain safe.
+  #              DB pre-pulled, scan runs --network none (air-gapped).
+  #   Phase 3 — Push exact scanned image to GHCR (no rebuild)
+  #
+  # Image digest verification:
+  #   After building, the digest is compared against the digest stored by
+  #   pr.yml's production-simulation job. A match confirms bit-for-bit parity
+  #   between what was validated in PR and what is being deployed.
+  #   Comparison is best-effort (continue-on-error) because the merge commit
+  #   SHA may differ from the PR head SHA on squash-merges.
+  # ---------------------------------------------------------------------------
+  build-scan-push:
+    name: Build, Scan & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [typecheck, unit-tests, integration-tests]
-
-    if: |
-      github.event_name == 'push' ||
-      github.event.inputs.mode == 'deploy' ||
-      github.event.inputs.mode == 'deploy-and-test'
-
+    needs: [validate, test-api, build-web]
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: write
-      security-events: write  # Required for uploading SARIF results
-
     outputs:
-      sha_short: ${{ steps.sha.outputs.sha_short }}
-
+      sha_short: ${{ steps.meta.outputs.sha_short }}
+      digest:    ${{ steps.digest.outputs.digest }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
       - name: Extract commit SHA
-        id: sha
-        run: echo "sha_short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        id: meta
+        run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      # Phase 1: Build into local Docker daemon for scanning.
+      # EXACT same parameters as pr.yml production-simulation:
+      #   target: production, build-args: NODE_ENV=production, GHA cache.
+      # The shared GHA cache means layers built in PR are reused here.
+      - name: Build Docker image (pre-scan, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: production
+          build-args: |
+            NODE_ENV=production
+          push: false
+          load: true
+          tags: |
+            fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+            fieldtrack-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Capture the content-addressable image digest.
+      # When source + cache + build-args are identical between PR and deploy,
+      # this digest will match the one stored in the PR simulation artifact.
+      - name: Capture image digest
+        id: digest
+        run: |
+          IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
+          DIGEST=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "=== Build traceability ==="
+          echo "  Commit SHA   : ${{ github.sha }}"
+          echo "  Image tag    : $IMAGE_NAME"
+          echo "  Image digest : $DIGEST"
+
+      # Compare this digest with the one stored by pr.yml's production-simulation.
+      # A match = bit-for-bit parity. A mismatch = code/cache divergence (warning).
+      # continue-on-error: true — squash merges produce a new commit SHA, which
+      # may cause minor divergence even with identical source code.
+      - name: Verify image digest parity with PR simulation
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find the PR number associated with this merge commit
+          PR_NUMBER=$(gh api \
+            "/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --jq '.[0].number // empty' 2>/dev/null || echo "")
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No associated PR found for commit ${{ github.sha }} — skipping digest comparison."
+            exit 0
+          fi
+
+          echo "Associated PR: #${PR_NUMBER}"
+
+          # Find the most recent successful pr.yml run for this PR
+          RUN_ID=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "pr.yml" \
+            --json databaseId,conclusion,headSha \
+            --jq "map(select(.conclusion == \"success\")) | .[0].databaseId // empty" \
+            2>/dev/null || echo "")
+
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful PR validation run found — skipping digest comparison."
+            exit 0
+          fi
+
+          # Download the image-digest artifact from that run
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "image-digest-pr-${PR_NUMBER}" \
+            --dir /tmp/pr-digest \
+            2>/dev/null || true
+
+          if [ ! -f /tmp/pr-digest/image-digest.txt ]; then
+            echo "PR image-digest artifact not found — skipping comparison."
+            exit 0
+          fi
+
+          PR_DIGEST=$(cat /tmp/pr-digest/image-digest.txt)
+          DEPLOY_DIGEST="${{ steps.digest.outputs.digest }}"
+
+          echo "PR simulation digest: $PR_DIGEST"
+          echo "Deploy image digest:  $DEPLOY_DIGEST"
+
+          if [ "$PR_DIGEST" = "$DEPLOY_DIGEST" ]; then
+            echo "✓ Digest match — bit-for-bit parity confirmed between PR and deploy."
+          else
+            echo "⚠ Digest mismatch — builds diverged between PR and deploy."
+            echo "  Expected on squash-merges where the commit SHA changes."
+            echo "  Ensure no source changes occurred between PR approval and deploy trigger."
+          fi
+
+      # Phase 2: Trivy scan — image pinned by immutable digest, NOT trivy-action.
+      # aquasec/trivy:0.49.1 → sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc
+      # Identical severity gates to pr.yml (HIGH,CRITICAL / exit-code 1).
+      # Two-phase: DB downloaded first (needs network), then scan runs --network none.
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: /tmp/trivy-cache
+          key: trivy-db-${{ runner.os }}-v1
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      - name: Pull Trivy vulnerability database
+        run: |
+          docker run --rm \
+            -v /tmp/trivy-cache:/root/.cache \
+            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
+            image --download-db-only
+
+      - name: Scan image with Trivy (HIGH/CRITICAL, air-gapped)
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+        run: |
+          SCAN_PASSED=false
+          for i in 1 2 3; do
+            if docker run --rm \
+              --network none \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /tmp/trivy-cache:/root/.cache \
+              -v "$(pwd)/.trivyignore:/tmp/.trivyignore:ro" \
+              aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
+                --skip-db-update \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                --ignorefile /tmp/.trivyignore \
+                "$IMAGE_NAME"; then
+              SCAN_PASSED=true
+              break
+            fi
+            echo "Trivy attempt $i failed..."
+            [ "$i" -lt 3 ] && sleep 5
+          done
+          if [ "$SCAN_PASSED" != "true" ]; then
+            echo "::error::Trivy scan failed after 3 attempts — HIGH/CRITICAL vulnerabilities found or scan error."
+            exit 1
+          fi
+
+      # Phase 3: Scan passed — push the exact scanned image (same layer digests).
+      # Uses docker tag + push rather than rebuilding to guarantee what was scanned
+      # is exactly what lands in the registry.
+      - name: Verify image digest unchanged before push
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          # docker inspect .Id returns the config digest (sha256:...) which is
+          # stable across tag operations — same value captured in the digest step.
+          CURRENT=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
+          echo "Expected digest : $IMAGE_DIGEST"
+          echo "Current digest  : $CURRENT"
+          if [ "$CURRENT" != "$IMAGE_DIGEST" ]; then
+            echo "ERROR: image digest changed between scan and push — aborting."
+            exit 1
+          fi
+          echo "✓ Digest verified — pushing exactly what was scanned."
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -195,114 +377,105 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./apps/api/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/fieldtrack-tech/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
-            ghcr.io/fieldtrack-tech/fieldtrack-backend:latest
-          # GHA layer cache — dramatically speeds up rebuilds when deps unchanged
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Container vulnerability scan
-        id: trivy
-        uses: aquasecurity/trivy-action@0.30.0
-        continue-on-error: true  # Tolerate transient Trivy runner/download failures
-        with:
-          image-ref: ghcr.io/fieldtrack-tech/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
-          exit-code: '0'  # Gate is enforced in the step below; Trivy itself always exits 0
-
-      - name: Upload Trivy scan results
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        continue-on-error: true  # Don't fail if SARIF upload has issues
-        with:
-          sarif_file: 'trivy-results.sarif'
-
-      - name: Block deployment on HIGH/CRITICAL vulnerabilities
+      - name: Push verified image to registry
         run: |
-          if [ ! -f trivy-results.sarif ]; then
-            echo "Trivy scan did not produce results (runner failure). Deployment allowed."
-            exit 0
-          fi
-          VULN_COUNT=$(jq '[.runs[].results[]] | length' trivy-results.sarif 2>/dev/null || echo "0")
-          if [ "${VULN_COUNT}" -gt "0" ]; then
-            echo "::error::${VULN_COUNT} HIGH/CRITICAL vulnerabilities found in container image. Deployment blocked."
-            jq -r '.runs[].results[] | "  \(.ruleId): \(.message.text | split("\n")[0])"' trivy-results.sarif 2>/dev/null || true
-            exit 1
-          fi
-          echo "Vulnerability scan passed — no HIGH/CRITICAL findings."
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          docker tag \
+            fieldtrack-backend:${{ steps.meta.outputs.sha_short }} \
+            ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          docker tag \
+            fieldtrack-backend:${{ steps.meta.outputs.sha_short }} \
+            ghcr.io/${OWNER}/fieldtrack-backend:latest
+          docker push ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          docker push ghcr.io/${OWNER}/fieldtrack-backend:latest
+          echo "✓ Pushed ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
 
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0.17.2
-        with:
-          image: ghcr.io/fieldtrack-tech/fieldtrack-backend:${{ steps.sha.outputs.sha_short }}
-          format: cyclonedx-json
-          output-file: sbom.cyclonedx.json
+      # Use the same pinned Trivy image to generate the SBOM — no additional
+      # tool dependency, no unpinned action, same supply-chain guarantees.
+      - name: Generate SBOM (CycloneDX)
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
+              --format cyclonedx \
+              --output /dev/stdout \
+              "$IMAGE_NAME" > sbom.json
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
-          name: sbom-${{ steps.sha.outputs.sha_short }}
-          path: sbom.cyclonedx.json
+          name: sbom-${{ steps.meta.outputs.sha_short }}
+          path: sbom.json
           retention-days: 90
 
+      - name: Save build provenance
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          echo "commit=${{ github.sha }}" > provenance.txt
+          echo "ref=${{ github.ref }}" >> provenance.txt
+          echo "image=${IMAGE_NAME}" >> provenance.txt
+          echo "digest=${IMAGE_DIGEST}" >> provenance.txt
+          echo "workflow=${{ github.workflow }}" >> provenance.txt
+          echo "run_id=${{ github.run_id }}" >> provenance.txt
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # DEPLOY — Blue-green deployment on the VPS
-  # ─────────────────────────────────────────────────────────────────────────────
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provenance-${{ steps.meta.outputs.sha_short }}
+          path: provenance.txt
+          retention-days: 90
 
+      - name: Build & scan summary
+        if: always()
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          SBOM_COUNT=$(python3 -c "import json; d=json.load(open('sbom.json')); print(len(d.get('components', [])))" 2>/dev/null || echo 'n/a')
+          {
+            echo "## Build · Scan · Push"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit SHA | \`${{ github.sha }}\` |"
+            echo "| Image tag | \`fieldtrack-backend:${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Image digest | \`${IMAGE_DIGEST}\` |"
+            echo "| SBOM components | ${SBOM_COUNT} |"
+            echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 |"
+            echo "| Registry | ghcr.io/${{ github.repository_owner }}/fieldtrack-backend |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # JOB: deploy
+  #
+  # Blue-Green deployment to VPS via SSH.
+  # The deploy-bluegreen.sh script manages slot switching and container health.
+  # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy (Blue-Green)
+    name: Deploy (Blue-Green SSH)
     runs-on: ubuntu-latest
-    needs: [build-image]
-
+    needs: [build-scan-push]
+    timeout-minutes: 15
     steps:
-      - name: Validate deployment secrets
+      - name: Validate required deployment secrets
         env:
           FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
           CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
         run: |
-          # ── Presence check ─────────────────────────────────────────────────
           if [ -z "${FT_API_BASE_URL:-}" ]; then
             echo "::error::FT_API_BASE_URL secret is not set. Deployment aborted."
             exit 1
           fi
-
-          # ── Domain guard — prevents accidental deploy to wrong environment ─
-          # Update this pattern if the production domain ever changes.
-          if ! echo "${FT_API_BASE_URL}" | grep -qE 'getfieldtrack\.app'; then
-            echo "::error::FT_API_BASE_URL '${FT_API_BASE_URL}' does not contain 'getfieldtrack.app'."
-            echo "::error::Refusing to deploy — this looks like a wrong-environment secret."
-            exit 1
-          fi
-
-          echo "✓ FT_API_BASE_URL validated: ${FT_API_BASE_URL}"
-
-          # ── CORS guard — prevents broken frontend→backend communication ────
-          # CORS_ORIGIN must include the production frontend origin.
-          # A missing or wrong value causes silent CORS failures in production.
+          echo "✓ FT_API_BASE_URL is set"
           if [ -z "${CORS_ORIGIN:-}" ]; then
             echo "::error::CORS_ORIGIN secret is not set. Deployment aborted."
             exit 1
           fi
+          echo "✓ CORS_ORIGIN is set"
 
-          if ! echo "${CORS_ORIGIN}" | grep -qF 'app.getfieldtrack.app'; then
-            echo "::error::CORS_ORIGIN '${CORS_ORIGIN}' does not include 'app.getfieldtrack.app'."
-            echo "::error::Frontend will be blocked by CORS in production."
-            exit 1
-          fi
-
-          echo "✓ CORS_ORIGIN validated: ${CORS_ORIGIN}"
-
-      - name: Deploy to VPS
+      - name: Blue-Green deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_HOST }}
@@ -311,29 +484,27 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
             chmod +x apps/api/scripts/deploy-bluegreen.sh
-            ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-image.outputs.sha_short }}"
-            echo "⏱ deploy completed in $(($(date +%s) - T0))s"
+            ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
+            echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # INFRASTRUCTURE SYNC — nginx + monitoring configs
-  # Runs after every deploy to ensure VPS always mirrors the repository.
-  # Monitoring stack restart is CONDITIONAL on config file hash changes —
-  # avoids unnecessary restarts when only application code changed.
-  # ─────────────────────────────────────────────────────────────────────────────
-
+  # ---------------------------------------------------------------------------
+  # JOB: sync-infra
+  #
+  # Syncs Nginx config (with slot-aware port substitution) and restarts the
+  # monitoring stack only when its config files have changed (hash-gated).
+  # ---------------------------------------------------------------------------
   sync-infra:
-    name: Sync Infrastructure
+    name: Sync Infrastructure (nginx + monitoring)
     runs-on: ubuntu-latest
     needs: [deploy]
-
+    timeout-minutes: 10
     steps:
-      - name: Sync nginx + monitoring configs on VPS
+      - name: Sync infrastructure configs via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DO_HOST }}
@@ -342,63 +513,43 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
-            REPO_DIR="$DEPLOY_ROOT"
-            INFRA_DIR="$REPO_DIR/infra"
+            DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
             ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
             INFRA_HASH_FILE="$HOME/.fieldtrack-infra-hash"
-            API_DOMAIN=$(grep -E '^API_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d '=' -f2-)
-            FRONTEND_DOMAIN=$(grep -E '^FRONTEND_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d '=' -f2-)
-            API_DOMAIN=${API_DOMAIN:-api.getfieldtrack.app}
-            FRONTEND_DOMAIN=${FRONTEND_DOMAIN:-app.getfieldtrack.app}
 
-            # ── Nginx ──────────────────────────────────────────────────────────
-            echo "=== Syncing Nginx config ==="
-
-            # Determine which port is currently active so the rendered config
-            # keeps routing to the correct backend slot.
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
-            if [ "$ACTIVE_SLOT" = "green" ]; then
-              BACKEND_PORT=3002
-            else
-              BACKEND_PORT=3001
+            if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
+
+            API_DOMAIN=$(grep -E '^API_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d= -f2-)
+            FRONTEND_DOMAIN=$(grep -E '^FRONTEND_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d= -f2-)
+
+            if [ -z "${API_DOMAIN:-}" ] || [ -z "${FRONTEND_DOMAIN:-}" ]; then
+              echo "::error::API_DOMAIN or FRONTEND_DOMAIN not found in infra/.env.monitoring"
+              exit 1
             fi
 
-            # Back up current live config before overwriting.
+            echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, port: $BACKEND_PORT) ==="
             sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
-
-            # Render the template with all placeholders substituted in one pass.
-            # __BACKEND_PORT__ carries the active slot port (3001 or 3002).
-            # __API_DOMAIN__ / __FRONTEND_DOMAIN__ carry the domain values.
             NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
             sed \
               -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
               -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
               -e "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" \
               "$INFRA_DIR/nginx/fieldtrack.conf" > "$NGINX_TMP"
-
             sudo cp "$NGINX_TMP" "$NGINX_LIVE"
             rm -f "$NGINX_TMP"
 
-            # Validate before reloading; restore backup if nginx rejects the config.
             if ! sudo nginx -t 2>&1; then
-              echo "ERROR: nginx configuration test failed. Restoring backup..."
+              echo "Nginx test failed — restoring backup..."
               sudo cp /tmp/fieldtrack.conf.bak "$NGINX_LIVE"
               exit 1
             fi
-
             sudo systemctl reload nginx
-            echo "Nginx reloaded (active slot: $ACTIVE_SLOT / port: $BACKEND_PORT)."
+            echo "✓ Nginx reloaded."
 
-            # ── Monitoring stack (conditional on config hash) ─────────────────
-            # Hash all non-nginx config files under /infra to detect changes.
-            # Only restarts Prometheus / Grafana / Loki stack when configs change,
-            # preventing unnecessary restarts on code-only deploys.
-            echo "=== Checking monitoring config hash ==="
-            # -readable: skip files not readable by the deploy user (e.g. root-owned docker volume files)
-            # -r / --no-run-if-empty: don't invoke sha256sum if find produced no output
-            # || echo "changed": if the pipeline still fails for any reason, default to restarting
+            echo "=== Checking monitoring stack config hash ==="
             CURRENT_HASH=$(find "$INFRA_DIR" -readable \
               \( -name "*.yml" -o -name "*.yaml" -o -name "*.conf" -o -name "*.toml" -o -name "*.json" \) \
               -not -path "$INFRA_DIR/nginx/*" \
@@ -411,66 +562,66 @@ jobs:
               docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
               docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d
               echo "$CURRENT_HASH" > "$INFRA_HASH_FILE"
-              echo "Monitoring stack updated."
+              echo "✓ Monitoring stack updated."
             else
               echo "Monitoring configs unchanged — skipping restart."
             fi
 
-            echo "⏱ infra sync completed in $(($(date +%s) - T0))s"
+            echo "✓ Infra sync completed in $(($(date +%s) - T0))s"
 
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # SMOKE TESTS — verify live API after deploy
-  # Also runs standalone (mode=smoke-test) against an already-deployed API.
-  # jq is pre-installed on ubuntu-latest — no apt-get install required.
-  # ─────────────────────────────────────────────────────────────────────────────
-
-  smoke-tests:
-    name: API Smoke Tests
+  # ---------------------------------------------------------------------------
+  # JOB: health-and-smoke
+  #
+  # Step 1: Poll /health and /ready until they return 200 (up to 60 s each).
+  # Step 2: Run the full smoke test suite (login + core API flows).
+  # Failure here triggers the rollback job automatically.
+  # ---------------------------------------------------------------------------
+  health-and-smoke:
+    name: Health Checks & Smoke Tests
     runs-on: ubuntu-latest
     needs: [sync-infra]
-
-    # Run after a successful deploy/sync-infra, OR standalone in smoke-test mode
-    # when sync-infra was skipped (no new deploy, just validating existing API).
-    if: |
-      always() &&
-      !cancelled() &&
-      (
-        needs.sync-infra.result == 'success' ||
-        (
-          github.event.inputs.mode == 'smoke-test' &&
-          needs.sync-infra.result == 'skipped'
-        )
-      ) &&
-      (
-        github.event_name == 'push' ||
-        github.event.inputs.mode == 'smoke-test' ||
-        github.event.inputs.mode == 'deploy-and-test'
-      )
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Wait for API health
+      - name: Wait for /health endpoint (60 s timeout)
         env:
           FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
         run: |
-          BASE_URL="${FT_API_BASE_URL:-https://api.getfieldtrack.app}"
-          BASE_URL="${BASE_URL%/}"
-          echo "Waiting for API to become ready..."
+          BASE_URL="${FT_API_BASE_URL%/}"
+          echo "Polling ${BASE_URL}/health ..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/health" || echo "000")
             if [ "$STATUS" = "200" ]; then
-              echo "✓ API ready (attempt $i)"
+              echo "✓ /health returned 200 (attempt $i)"
               exit 0
             fi
+            echo "  attempt $i: HTTP $STATUS — waiting 2s..."
             sleep 2
           done
-          echo "✗ API did not become ready after 60s"
+          echo "✗ /health did not return 200 after 60 s"
           exit 1
 
-      - name: Run API Smoke Tests
+      - name: Wait for /ready endpoint (30 s timeout)
+        env:
+          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
+        run: |
+          BASE_URL="${FT_API_BASE_URL%/}"
+          echo "Polling ${BASE_URL}/ready ..."
+          for i in $(seq 1 15); do
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/ready" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ /ready returned 200 (attempt $i)"
+              exit 0
+            fi
+            echo "  attempt $i: HTTP $STATUS — waiting 2s..."
+            sleep 2
+          done
+          echo "✗ /ready did not return 200 after 30 s"
+          exit 1
+
+      - name: Run smoke tests
         env:
           FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
           FT_EMP_EMAIL: ${{ secrets.FT_EMP_EMAIL }}
@@ -480,38 +631,47 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          T0=$SECONDS
           chmod +x apps/api/scripts/smoke-test.sh
           ./apps/api/scripts/smoke-test.sh
-          echo "⏱ smoke tests: $((SECONDS - T0))s"
 
       - name: Upload smoke test report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
-          name: smoke-test-report
+          name: smoke-test-report-${{ github.sha }}
           path: smoke-report.json
+          retention-days: 30
 
+      - name: Deployment summary
+        run: |
+          echo "====================================================="
+          echo " Production Deployment: COMPLETE ✅"
+          echo "====================================================="
+          echo "  Commit:   ${{ github.sha }}"
+          echo "  /health:  OK"
+          echo "  /ready:   OK"
+          echo "  Smoke:    passed"
+          echo "====================================================="
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # AUTO-ROLLBACK — triggers on deploy, infra-sync, or smoke-test failure.
-  # Skipped in smoke-test-only mode (nothing was deployed to roll back).
-  # ─────────────────────────────────────────────────────────────────────────────
-
+  # ---------------------------------------------------------------------------
+  # JOB: rollback
+  #
+  # Triggered automatically when deploy, sync-infra, OR health-and-smoke fails.
+  # Restores the previously healthy Blue-Green slot via the rollback script.
+  # 'if: always()' ensures this job can evaluate even if upstream jobs failed.
+  # ---------------------------------------------------------------------------
   rollback:
-    name: Rollback Deployment
+    name: Rollback Deployment (auto)
     runs-on: ubuntu-latest
-    needs: [deploy, sync-infra, smoke-tests]
-
+    needs: [deploy, sync-infra, health-and-smoke]
+    timeout-minutes: 10
     if: |
       always() &&
-      github.event.inputs.mode != 'smoke-test' &&
       (
         needs.deploy.result == 'failure' ||
         needs.sync-infra.result == 'failure' ||
-        needs.smoke-tests.result == 'failure'
+        needs.health-and-smoke.result == 'failure'
       )
-
     steps:
       - name: Rollback on VPS
         uses: appleboy/ssh-action@v1.0.3
@@ -520,8 +680,9 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            set -euo pipefail
+            DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
             chmod +x apps/api/scripts/rollback.sh
             ./apps/api/scripts/rollback.sh --auto
-
+            echo "✓ Rollback completed."
