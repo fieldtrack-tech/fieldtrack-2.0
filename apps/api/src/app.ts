@@ -7,9 +7,6 @@ import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
-import { adminQueuesRoutes } from "./modules/admin/queues.routes.js";
-import { startDistanceWorker } from "./workers/distance.worker.js";
-import { startAnalyticsWorker } from "./workers/analytics.worker.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
 // Phase 15: Dedicated security plugins
@@ -195,6 +192,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // module load time by analytics.queue.ts and distance.queue.ts.
   // Skip in CI mode when external services are unavailable.
   if (!skipExternalServices) {
+    const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
     await app.register(adminQueuesRoutes);
   }
 
@@ -202,6 +200,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // The worker runs its own Redis-backed event loop — no blocking here.
   // Skip in CI mode when Redis is unavailable.
   if (!skipExternalServices) {
+    const { startDistanceWorker } = await import("./workers/distance.worker.js");
     startDistanceWorker(app);
   }
 
@@ -210,6 +209,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // org_daily_metrics so dashboard/leaderboard queries stay constant-time.
   // Skip in CI mode when Redis is unavailable.
   if (!skipExternalServices) {
+    const { startAnalyticsWorker } = await import("./workers/analytics.worker.js");
     startAnalyticsWorker(app);
   }
 

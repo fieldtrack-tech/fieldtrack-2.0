@@ -27,13 +27,19 @@
 import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import fastifyRateLimit from "@fastify/rate-limit";
-import { Redis } from "ioredis";
-import { redisConnectionOptions } from "../../config/redis.js";
-
-// Dedicated ioredis connection for rate-limit store (separate from BullMQ).
-const rateLimitRedis = new Redis(redisConnectionOptions);
 
 const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+    // Skip rate limiting in CI mode when Redis is unavailable
+    if (process.env.SKIP_EXTERNAL_SERVICES === "true") {
+        fastify.log.info("security-rate-limit plugin SKIPPED (SKIP_EXTERNAL_SERVICES=true)");
+        return;
+    }
+
+    // Lazy import Redis only when needed
+    const { Redis } = await import("ioredis");
+    const { redisConnectionOptions } = await import("../../config/redis.js");
+    const rateLimitRedis = new Redis(redisConnectionOptions);
+
     await fastify.register(fastifyRateLimit, {
         global: true,
         max: 1200,

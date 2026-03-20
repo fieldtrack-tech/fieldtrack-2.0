@@ -1,7 +1,6 @@
 import "./tracing.js";
 import { env, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
-import { performStartupRecovery } from "./workers/distance.worker.js";
 
 async function start(): Promise<void> {
   const app = await buildApp();
@@ -35,6 +34,7 @@ async function start(): Promise<void> {
     // background on subsequent event loop ticks.
     // Skip in CI mode when Redis is unavailable.
     if (process.env.SKIP_EXTERNAL_SERVICES !== "true") {
+      const { performStartupRecovery } = await import("./workers/distance.worker.js");
       performStartupRecovery(app);
     }
   } catch (error) {
