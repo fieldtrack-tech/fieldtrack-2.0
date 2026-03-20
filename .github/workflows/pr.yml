@@ -347,7 +347,7 @@ jobs:
         env:
           METRICS_SCRAPE_TOKEN: ci-placeholder
           GRAFANA_ADMIN_PASSWORD: ci-placeholder
-          API_DOMAIN: api.test.local
+          API_HOSTNAME: api.test.local
           FRONTEND_DOMAIN: app.test.local
 
       - name: Infra CI summary

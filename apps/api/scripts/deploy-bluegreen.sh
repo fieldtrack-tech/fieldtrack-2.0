@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+set -x
+trap 'echo "❌ Failed at line $LINENO"' ERR
 
 IMAGE="ghcr.io/fieldtrack-tech/fieldtrack-backend:${1:-latest}"
 IMAGE_SHA="${1:-latest}"
@@ -18,18 +20,12 @@ NETWORK="fieldtrack_network"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Deployment root must be explicitly defined
-DEPLOY_USER="${DEPLOY_USER:-$(whoami)}"
-# Fallback to default path if not set (prevents SSH context issues)
-DEPLOY_ROOT="${DEPLOY_ROOT:-/home/ashish/FieldTrack-2.0}"
+# Load and validate environment.
+# Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
+# Exports all variables from apps/api/.env into this process.
+# Temporarily disable trace so .env values are not echoed to logs.
+{ set +x; source "$SCRIPT_DIR/load-env.sh"; set -x; }
 
-if [ -z "$DEPLOY_ROOT" ]; then
-    echo "ERROR: DEPLOY_ROOT environment variable must be set."
-    echo "Example: export DEPLOY_ROOT=/home/ashish/FieldTrack-2.0"
-    exit 1
-fi
-
-ENV_FILE="$DEPLOY_ROOT/apps/api/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
 NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
 ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
@@ -39,48 +35,9 @@ MAX_HISTORY=5
 MAX_HEALTH_ATTEMPTS=40
 HEALTH_INTERVAL=3
 
-# ---------------------------------------------------------------------------
-# Pre-flight: resolve API_DOMAIN.
-# Prefer the calling environment (CI sets it explicitly); fall back to the
-# app .env file so direct VPS invocations work without exporting the var.
-# ---------------------------------------------------------------------------
-if [ -z "${API_DOMAIN:-}" ] && [ -f "$ENV_FILE" ]; then
-    API_DOMAIN=$(grep -E '^API_DOMAIN=' "$ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-fi
-
-if [ -z "${API_DOMAIN:-}" ]; then
-    echo "ERROR: API_DOMAIN is not set and could not be read from $ENV_FILE. Deployment aborted."
-    exit 1
-fi
-
-# Strip any scheme prefix (http:// or https://) — server_name only accepts bare hostnames.
-API_DOMAIN="${API_DOMAIN#https://}"
-API_DOMAIN="${API_DOMAIN#http://}"
-
-# ---------------------------------------------------------------------------
-# Pre-flight: validate API_DOMAIN is consistent with API_BASE_URL.
-# Both values must agree on the hostname so nginx and the API agree on identity.
-# Misconfiguration here causes subtle failures (wrong cert, wrong CORS, etc.)
-# ---------------------------------------------------------------------------
-if [ -f "$ENV_FILE" ]; then
-    API_BASE_URL_VAL=$(grep -E '^API_BASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-    if [ -n "$API_BASE_URL_VAL" ]; then
-        # Extract just the hostname from the URL (strips scheme + trailing slash/path).
-        API_BASE_HOST="${API_BASE_URL_VAL#https://}"
-        API_BASE_HOST="${API_BASE_HOST#http://}"
-        API_BASE_HOST="${API_BASE_HOST%%/*}"
-        if [ "$API_DOMAIN" != "$API_BASE_HOST" ]; then
-            echo "ERROR: API_DOMAIN / API_BASE_URL mismatch — deployment aborted."
-            echo "  API_DOMAIN:   $API_DOMAIN"
-            echo "  API_BASE_URL: $API_BASE_URL_VAL  (resolved host: $API_BASE_HOST)"
-            echo ""
-            echo "API_DOMAIN must equal the hostname portion of API_BASE_URL."
-            echo "Fix both values in $ENV_FILE before retrying."
-            exit 1
-        fi
-        echo "✓ API_DOMAIN matches API_BASE_URL host ($API_DOMAIN)"
-    fi
-fi
+# API_HOSTNAME is already validated and exported by load-env.sh.
+# It is the bare hostname derived from API_BASE_URL (e.g. api.fieldtrack.app).
+echo "✓ API_HOSTNAME: $API_HOSTNAME"
 
 # ---------------------------------------------------------------------------
 # Pre-flight: validate METRICS_SCRAPE_TOKEN consistency.
@@ -205,7 +162,7 @@ NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
 # Only __BACKEND_PORT__ and __API_DOMAIN__ are substituted — nothing else.
 sed \
     -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
-    -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
+    -e "s|__API_DOMAIN__|$API_HOSTNAME|g" \
     "$NGINX_TEMPLATE" > "$NGINX_TMP"
 
 # Save the current live config so we can restore it if validation fails.

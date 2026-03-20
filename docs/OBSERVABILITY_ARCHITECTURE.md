@@ -147,7 +147,7 @@ The compactor process runs inside the single-binary Loki container.  It scans th
 | Property | Value |
 |----------|-------|
 | Bound to | `127.0.0.1:3333` |
-| Public URL | `https://<API_DOMAIN>/monitor/` |
+| Public URL | `https://<API_HOSTNAME>/monitor/` |
 | Served via | Nginx `location /monitor/` → `proxy_pass http://127.0.0.1:3333` |
 | Auth | Admin credentials from `GRAFANA_ADMIN_PASSWORD` secret |
 | Sign-up | Disabled (`GF_USERS_ALLOW_SIGN_UP=false`) |
@@ -260,7 +260,7 @@ And extend [infra/docker-compose.monitoring.yml](../infra/docker-compose.monitor
 
 ## Certbot Bootstrap (Fresh VPS)
 
-Nginx references LetsEncrypt certificates at `/etc/letsencrypt/live/<API_DOMAIN>/`. On a fresh VPS these do not exist yet, so a full SSL config causes Nginx to refuse to start.
+Nginx references LetsEncrypt certificates at `/etc/letsencrypt/live/<API_HOSTNAME>/`. On a fresh VPS these do not exist yet, so a full SSL config causes Nginx to refuse to start.
 
 **Safe bootstrap sequence:**
 
@@ -273,14 +273,14 @@ Nginx references LetsEncrypt certificates at `/etc/letsencrypt/live/<API_DOMAIN>
 
 3. Obtain the certificate:
    ```bash
-   sudo certbot certonly --webroot -w /var/www/certbot -d $API_DOMAIN
+   sudo certbot certonly --webroot -w /var/www/certbot -d $API_HOSTNAME
    ```
 
 4. Render and install the full SSL config from the template:
    ```bash
    sed \
      -e "s|__BACKEND_PORT__|3001|g" \
-     -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
+     -e "s|__API_DOMAIN__|$API_HOSTNAME|g" \
      infra/nginx/fieldtrack.conf | sudo tee /etc/nginx/sites-enabled/fieldtrack.conf
    sudo nginx -t && sudo systemctl reload nginx
    ```

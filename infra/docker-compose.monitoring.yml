@@ -71,7 +71,7 @@ services:
     environment:
       # Passed through to prometheus.yml for scrape authentication and probe targets
       - METRICS_SCRAPE_TOKEN=${METRICS_SCRAPE_TOKEN}
-      - API_DOMAIN=${API_DOMAIN}
+      - API_HOSTNAME=${API_HOSTNAME}
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
@@ -112,7 +112,7 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=https://${API_DOMAIN}/monitor
+      - GF_SERVER_ROOT_URL=https://${API_HOSTNAME}/monitor
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
     volumes:
       - grafana_data:/var/lib/grafana

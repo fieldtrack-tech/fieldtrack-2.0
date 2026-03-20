@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -x
+trap 'echo "❌ Failed at line $LINENO"' ERR
 
-# Deployment root must be explicitly defined
-DEPLOY_ROOT="${DEPLOY_ROOT:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ -z "$DEPLOY_ROOT" ]; then
-    echo "ERROR: DEPLOY_ROOT environment variable must be set."
-    echo "Example: export DEPLOY_ROOT=/home/ashish/FieldTrack-2.0"
-    exit 1
-fi
+# Load and validate environment.
+# Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
+# Exports all variables from apps/api/.env into this process.
+# Temporarily disable trace so .env values are not echoed to logs.
+{ set +x; source "$SCRIPT_DIR/load-env.sh"; set -x; }
 
 DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 AUTO_MODE=false
 
