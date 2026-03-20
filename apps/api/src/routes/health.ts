@@ -1,10 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { Redis } from "ioredis";
 import { createHash } from "crypto";
-import { redisConnectionOptions } from "../config/redis.js";
-import { supabaseServiceClient } from "../config/supabase.js";
-import { distanceQueue } from "../workers/distance.queue.js";
-import { analyticsQueue } from "../workers/analytics.queue.js";
 import { env } from "../config/env.js";
 
 interface HealthResponse {
@@ -77,6 +72,13 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     app.get<{ Reply: ReadyResponse }>("/ready", {
         schema: { tags: ["health"] },
     }, async (_request, reply) => {
+        // Lazy import to avoid triggering connections at module load
+        const { Redis } = await import("ioredis");
+        const { redisConnectionOptions } = await import("../config/redis.js");
+        const { supabaseServiceClient } = await import("../config/supabase.js");
+        const { distanceQueue } = await import("../workers/distance.queue.js");
+        const { analyticsQueue } = await import("../workers/analytics.queue.js");
+
         const checks: ReadyResponse["checks"] = {
             redis: "error",
             supabase: "error",

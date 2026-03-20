@@ -676,6 +676,8 @@ jobs:
       - name: Run deploy script in CI mode
         env:
           DEPLOY_ROOT: /tmp/vps/FieldTrack-2.0
+          CI_MODE: "true"
+          SKIP_EXTERNAL_SERVICES: "true"
         run: |
           echo "=== Running deploy-bluegreen.sh in CI_MODE ==="
           cd /tmp/vps/FieldTrack-2.0
@@ -687,7 +689,7 @@ jobs:
           docker tag fieldtrack-backend:ci-deploy ghcr.io/fieldtrack-tech/fieldtrack-backend:ci-test
           
           # Run deploy script in CI mode (no side effects)
-          CI_MODE=true bash apps/api/scripts/deploy-bluegreen.sh ci-test
+          CI_MODE=true SKIP_EXTERNAL_SERVICES=true bash apps/api/scripts/deploy-bluegreen.sh ci-test
           
           echo "✓ Deploy script completed successfully"
 

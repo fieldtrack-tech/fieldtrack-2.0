@@ -4,21 +4,24 @@ set -x
 trap 'echo "❌ Failed at line $LINENO"' ERR
 
 # ── CI Mode Support ────────────────────────────────────────────────────────────
-# When CI_MODE=true, the script simulates deployment without side effects:
-#   - Skips nginx reload
-#   - Skips port switching
-#   - Skips DNS/public health checks
-#   - Skips persistent state writes
-# But still performs:
-#   - Env loading and validation
-#   - Container build and start
-#   - Internal health check (127.0.0.1:PORT/health)
+# When CI_MODE=true, the script simulates deployment without side effects
 CI_MODE="${CI_MODE:-false}"
+SKIP_EXTERNAL_SERVICES="${SKIP_EXTERNAL_SERVICES:-false}"
+
+# Safety guard: prevent production misuse
+if [ "$CI_MODE" != "true" ] && [ "$SKIP_EXTERNAL_SERVICES" = "true" ]; then
+    echo "❌ ERROR: SKIP_EXTERNAL_SERVICES=true is only allowed in CI_MODE"
+    echo "   This would deploy a container without Redis/Supabase/BullMQ to production"
+    exit 1
+fi
 
 if [ "$CI_MODE" = "true" ]; then
     echo "========================================="
     echo "CI MODE ENABLED"
     echo "Simulating deployment without side effects"
+    if [ "$SKIP_EXTERNAL_SERVICES" = "true" ]; then
+        echo "External services (Redis/Supabase/BullMQ) will be skipped"
+    fi
     echo "========================================="
 fi
 
@@ -132,6 +135,8 @@ docker run -d \
   -p "127.0.0.1:$INACTIVE_PORT:$APP_PORT" \
   --restart unless-stopped \
   --env-file "$ENV_FILE" \
+  -e CI_MODE="${CI_MODE:-false}" \
+  -e SKIP_EXTERNAL_SERVICES="${SKIP_EXTERNAL_SERVICES:-false}" \
   "$IMAGE"
 
 echo "[4/8] Waiting for readiness check..."
