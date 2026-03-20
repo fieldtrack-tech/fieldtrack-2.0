@@ -308,6 +308,22 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
 
+      # Fallback: if the Trivy action itself fails (network outage, action runner
+      # issue, DB download failure) retry with the Trivy Docker image directly.
+      # Identical severity gates — no weakening of the security threshold.
+      - name: Trivy fallback scan (CLI retry on action failure)
+        if: failure()
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+        run: |
+          echo "Trivy action failed — retrying via Docker CLI..."
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              "$IMAGE_NAME"
+
       - name: Upload Trivy results to GitHub Security tab
         if: always()
         uses: github/codeql-action/upload-sarif@v4

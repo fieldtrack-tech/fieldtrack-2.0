@@ -299,11 +299,16 @@ jobs:
           # directory in the nginx:stable-alpine image silently fails because
           # Docker cannot create the intermediate path. A directory mount
           # always works regardless of what exists inside the image.
+          rm -rf ssl || true
           mkdir -p ssl
           openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
             -keyout ssl/origin.key \
             -out    ssl/origin.crt \
             -subj   "/CN=localhost" 2>/dev/null
+
+          # Verify cert files were created before passing them to Docker
+          test -f ssl/origin.crt
+          test -f ssl/origin.key
 
           # --- Run nginx -t with the SSL directory mounted ---
           docker run --rm \
@@ -408,6 +413,23 @@ jobs:
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
           exit-code: '1'
+
+      # Fallback: if the Trivy action itself fails (network outage, action runner
+      # issue, DB download failure) retry with the Trivy Docker image directly.
+      # Identical severity gates — no weakening of the security threshold.
+      # Mounts the Docker socket so Trivy can inspect the local daemon image.
+      - name: Trivy fallback scan (CLI retry on action failure)
+        if: failure()
+        env:
+          IMAGE_NAME: fieldtrack-backend:pr-${{ github.event.number }}
+        run: |
+          echo "Trivy action failed — retrying via Docker CLI..."
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              "$IMAGE_NAME"
 
       - name: Upload Trivy results to GitHub Security tab
         if: always()
