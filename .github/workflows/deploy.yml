@@ -484,7 +484,7 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
