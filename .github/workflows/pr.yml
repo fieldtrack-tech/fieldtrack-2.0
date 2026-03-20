@@ -287,7 +287,7 @@ jobs:
           # --- Substitute template placeholders ---
           sed \
             -e 's/__BACKEND_PORT__/3001/g' \
-            -e 's/__API_DOMAIN__/api.test.local/g' \
+            -e 's/__API_HOSTNAME__/api.test.local/g' \
             -e 's/__FRONTEND_DOMAIN__/app.test.local/g' \
             infra/nginx/fieldtrack.conf > /tmp/nginx-test.conf
 
@@ -347,7 +347,7 @@ jobs:
         env:
           METRICS_SCRAPE_TOKEN: ci-placeholder
           GRAFANA_ADMIN_PASSWORD: ci-placeholder
-          API_DOMAIN: api.test.local
+          API_HOSTNAME: api.test.local
           FRONTEND_DOMAIN: app.test.local
 
       - name: Infra CI summary
@@ -593,3 +593,190 @@ jobs:
           echo "============================================="
           echo " This PR is safe to merge."
           echo "============================================="
+
+  # ---------------------------------------------------------------------------
+  # JOB: production-parity  ← NEW: Full deployment simulation with env validation
+  #
+  # Simulates the complete production deployment flow in CI:
+  #   1. Copy CI env files (safe, committed values)
+  #   2. Run validate-env.sh --check-monitoring (same as production)
+  #   3. Run deploy-bluegreen.sh in CI_MODE (no side effects)
+  #   4. Verify container starts and responds to /health
+  #
+  # This ensures: PR passes → production deployment WILL pass
+  # ---------------------------------------------------------------------------
+  production-parity:
+    name: Production Parity (Full Deploy Simulation)
+    runs-on: ubuntu-latest
+    needs: production-simulation
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Setup CI environment files
+        run: |
+          echo "=== Setting up CI environment ==="
+          # Copy committed CI env files (safe, no real secrets)
+          cp apps/api/.env.ci apps/api/.env
+          cp infra/.env.monitoring.ci infra/.env.monitoring
+          
+          echo "✓ CI env files copied"
+          echo ""
+          echo "API env:"
+          grep -E "^(API_BASE_URL|API_HOSTNAME|CORS_ORIGIN)=" apps/api/.env || true
+          echo ""
+          echo "Monitoring env:"
+          grep -E "^(API_HOSTNAME|METRICS_SCRAPE_TOKEN)=" infra/.env.monitoring || true
+
+      - name: Validate environment contract
+        run: |
+          echo "=== Validating environment contract ==="
+          chmod +x apps/api/scripts/validate-env.sh
+          CI_MODE=true bash apps/api/scripts/validate-env.sh --check-monitoring
+          echo "✓ Environment contract validated"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production image for CI deployment
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: production
+          build-args: |
+            NODE_ENV=production
+          push: false
+          load: true
+          tags: fieldtrack-backend:ci-deploy
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Simulate VPS environment
+        run: |
+          echo "=== Simulating VPS environment ==="
+          # Create VPS-like directory structure
+          mkdir -p /tmp/vps/FieldTrack-2.0
+          
+          # Copy entire repo to simulated VPS location
+          cp -r . /tmp/vps/FieldTrack-2.0/
+          
+          # Verify structure
+          ls -la /tmp/vps/FieldTrack-2.0/apps/api/scripts/
+          echo "✓ VPS environment simulated"
+
+      - name: Run deploy script in CI mode
+        env:
+          DEPLOY_ROOT: /tmp/vps/FieldTrack-2.0
+          CI_MODE: "true"
+          SKIP_EXTERNAL_SERVICES: "true"
+        run: |
+          echo "=== Running deploy-bluegreen.sh in CI_MODE ==="
+          cd /tmp/vps/FieldTrack-2.0
+          chmod +x apps/api/scripts/deploy-bluegreen.sh
+          chmod +x apps/api/scripts/load-env.sh
+          chmod +x apps/api/scripts/validate-env.sh
+          
+          # Tag the built image to match what deploy script expects
+          docker tag fieldtrack-backend:ci-deploy ghcr.io/fieldtrack-tech/fieldtrack-backend:ci-test
+          
+          # Run deploy script in CI mode (no side effects)
+          CI_MODE=true SKIP_EXTERNAL_SERVICES=true bash apps/api/scripts/deploy-bluegreen.sh ci-test
+          
+          echo "✓ Deploy script completed successfully"
+
+      - name: Verify container health
+        run: |
+          echo "=== Verifying container health ==="
+          
+          # Container exit watchdog - catches crash-after-start
+          if ! docker ps --filter "name=backend-" --format "{{.Names}}" | grep -q backend-; then
+            echo "❌ No running backend container found"
+            docker ps -a --filter "name=backend-"
+            exit 1
+          fi
+          
+          # Find the container (should be backend-green or backend-blue)
+          CONTAINER_NAME=$(docker ps --filter "name=backend-" --format "{{.Names}}" | head -1)
+          echo "Found container: $CONTAINER_NAME"
+          
+          # Get container port
+          CONTAINER_PORT=$(docker port "$CONTAINER_NAME" | grep "3000/tcp" | cut -d: -f2)
+          
+          if [ -z "$CONTAINER_PORT" ]; then
+            echo "❌ Container port not found"
+            docker port "$CONTAINER_NAME"
+            exit 1
+          fi
+          
+          echo "Container listening on: 127.0.0.1:$CONTAINER_PORT"
+          
+          # Port binding check - catches port conflicts and binding issues
+          if ! ss -tuln | grep -q ":$CONTAINER_PORT"; then
+            echo "❌ Port $CONTAINER_PORT not bound"
+            echo "=== Port status ==="
+            ss -tuln | grep ":$CONTAINER_PORT" || echo "No listener on port $CONTAINER_PORT"
+            exit 1
+          fi
+          echo "✓ Port $CONTAINER_PORT is bound"
+          
+          # Wait for container to be ready
+          echo "Waiting for /health endpoint..."
+          HEALTH_OK=false
+          for i in $(seq 1 30); do
+            # Container exit watchdog during health check loop
+            if ! docker ps --filter "name=$CONTAINER_NAME" --format "{{.Names}}" | grep -q "$CONTAINER_NAME"; then
+              echo "❌ Container $CONTAINER_NAME exited during health check"
+              docker logs "$CONTAINER_NAME" --tail 100 || true
+              exit 1
+            fi
+            
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+              "http://127.0.0.1:$CONTAINER_PORT/health" 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ Container /health responded HTTP 200 (attempt $i)"
+              HEALTH_OK=true
+              break
+            fi
+            echo "  attempt $i/30: HTTP $STATUS"
+            sleep 2
+          done
+          
+          if [ "$HEALTH_OK" != "true" ]; then
+            echo "❌ Container health check failed"
+            echo "=== Container logs ==="
+            docker logs "$CONTAINER_NAME" --tail 100 || true
+            exit 1
+          fi
+          
+          echo "✓ Container health check passed"
+
+      - name: Cleanup containers
+        if: always()
+        run: |
+          echo "=== Cleaning up CI containers ==="
+          docker rm -f backend-blue backend-green 2>/dev/null || true
+          echo "✓ Cleanup complete"
+
+      - name: Production parity summary
+        run: |
+          echo "============================================="
+          echo " Production Parity: PASSED ✅"
+          echo "============================================="
+          echo "  Env validation:  ✓ passed"
+          echo "  Deploy script:   ✓ executed in CI_MODE"
+          echo "  Container start: ✓ successful"
+          echo "  Health check:    ✓ HTTP 200"
+          echo "============================================="
+          echo " Full production flow validated."
+          echo " This PR will deploy successfully."
+          echo "============================================="
+

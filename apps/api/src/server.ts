@@ -1,7 +1,6 @@
 import "./tracing.js";
 import { env, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
-import { performStartupRecovery } from "./workers/distance.worker.js";
 
 async function start(): Promise<void> {
   const app = await buildApp();
@@ -33,7 +32,11 @@ async function start(): Promise<void> {
     // performStartupRecovery is non-blocking internally (setImmediate batching)
     // so this call returns almost immediately and enqueuing happens in the
     // background on subsequent event loop ticks.
-    performStartupRecovery(app);
+    // Skip in CI mode when Redis is unavailable.
+    if (process.env.SKIP_EXTERNAL_SERVICES !== "true") {
+      const { performStartupRecovery } = await import("./workers/distance.worker.js");
+      performStartupRecovery(app);
+    }
   } catch (error) {
     app.log.error(error, "Failed to start server");
     process.exit(1);

@@ -44,7 +44,7 @@ err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 render_nginx_ssl_config() {
     local target_file="$1"
     cp "$REPO_DIR/infra/nginx/fieldtrack.conf" "$target_file"
-    sed -i "s|__API_DOMAIN__|$DOMAIN|g" "$target_file"
+    sed -i "s|__API_HOSTNAME__|$DOMAIN|g" "$target_file"
     sed -i "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" "$target_file"
 }
 

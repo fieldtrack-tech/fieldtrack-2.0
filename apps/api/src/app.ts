@@ -7,9 +7,6 @@ import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
-import { adminQueuesRoutes } from "./modules/admin/queues.routes.js";
-import { startDistanceWorker } from "./workers/distance.worker.js";
-import { startAnalyticsWorker } from "./workers/analytics.worker.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
 // Phase 15: Dedicated security plugins
@@ -24,6 +21,9 @@ import { registerZod } from "./plugins/zod.plugin.js";
 import compressPlugin from "@fastify/compress";
 
 export async function buildApp(): Promise<FastifyInstance> {
+  // CI Mode: Skip external service initialization
+  const skipExternalServices = process.env.SKIP_EXTERNAL_SERVICES === "true";
+
   const app = Fastify({
     logger: getLoggerConfig(env.APP_ENV),
     // Phase 10: HTTP hardening (externalized limits)
@@ -38,6 +38,18 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ─── Phase 15: Security Plugin Stack ────────────────────────────────────────
   // Registered in order: helmet → cors → rate-limit → abuse-logging.
   // Each plugin is isolated in src/plugins/security/ for maintainability.
+
+  // Log startup configuration for instant debugging
+  app.log.info({
+    apiBaseUrl: process.env.API_BASE_URL,
+    apiHostname: process.env.API_BASE_URL ? new URL(process.env.API_BASE_URL).host : undefined,
+    skipExternal: skipExternalServices,
+  }, "startup:config");
+
+  if (skipExternalServices) {
+    app.log.warn("SKIP_EXTERNAL_SERVICES=true — Redis, Supabase, and BullMQ will NOT be initialized");
+    app.log.warn("This mode is for CI testing only. DO NOT use in production.");
+  }
 
   // Register Zod validator/serializer compilers before any routes or plugins
   // that might add routes. This is the single place that enables Zod schema
@@ -178,16 +190,28 @@ export async function buildApp(): Promise<FastifyInstance> {
   // so integration tests (which call registerRoutes directly) are not affected.
   // Requires Redis to be available; the queue objects are already instantiated at
   // module load time by analytics.queue.ts and distance.queue.ts.
-  await app.register(adminQueuesRoutes);
+  // Skip in CI mode when external services are unavailable.
+  if (!skipExternalServices) {
+    const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
+    await app.register(adminQueuesRoutes);
+  }
 
   // Phase 10: Start BullMQ distance worker on boot.
   // The worker runs its own Redis-backed event loop — no blocking here.
-  startDistanceWorker(app);
+  // Skip in CI mode when Redis is unavailable.
+  if (!skipExternalServices) {
+    const { startDistanceWorker } = await import("./workers/distance.worker.js");
+    startDistanceWorker(app);
+  }
 
   // Phase 21: Start analytics aggregation worker.
   // Processes completed sessions and maintains employee_daily_metrics +
   // org_daily_metrics so dashboard/leaderboard queries stay constant-time.
-  startAnalyticsWorker(app);
+  // Skip in CI mode when Redis is unavailable.
+  if (!skipExternalServices) {
+    const { startAnalyticsWorker } = await import("./workers/analytics.worker.js");
+    startAnalyticsWorker(app);
+  }
 
   // NOTE: performStartupRecovery is intentionally NOT called here.
   // It must run AFTER app.listen() resolves in server.ts so it never

@@ -1,38 +1,22 @@
 /** @type {import('next').NextConfig} */
 
-// Validate API origin - fail fast if invalid
-function validateApiOrigin(origin) {
-  if (!origin || typeof origin !== 'string') {
-    throw new Error('API_DOMAIN must be a valid string');
-  }
-  
-  // Must be a valid URL or relative path
-  if (!origin.startsWith('http://') && !origin.startsWith('https://') && !origin.startsWith('/')) {
-    throw new Error(`Invalid API_DOMAIN: ${origin}. Must start with http://, https://, or /`);
-  }
-  
-  return origin;
-}
+// NEXT_PUBLIC_API_URL is the single source of truth for the backend API location.
+//
+// Valid values:
+//   Full URL  → https://api.example.com
+//               Browser calls the API directly; the /api/proxy rewrite is also
+//               available for convenience or same-origin setups.
+//   Path      → /api/proxy
+//               Browser routes requests through Next.js's server-side proxy.
+//               Used in CI placeholder builds or self-hosted setups.
+//               Rewrite is skipped when the value is a relative path to prevent
+//               an infinite routing loop (/api/proxy → /api/proxy → …).
+const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+const apiIsFullUrl = /^https?:\/\//.test(NEXT_PUBLIC_API_URL);
 
-const defaultApiOrigin = process.env.NODE_ENV === "development"
-  ? "http://localhost:3000"
-  : (() => {
-      const url = process.env.NEXT_PUBLIC_API_URL;
-      if (!url) {
-        throw new Error(
-          "NEXT_PUBLIC_API_URL is required in production.\n" +
-          "Set it to your API base URL (e.g. https://api.getfieldtrack.app).\n" +
-          "For local development, set NODE_ENV=development or set the variable explicitly."
-        );
-      }
-      return url;
-    })();
-
-const apiOrigin = process.env.API_DOMAIN
-  ? (process.env.API_DOMAIN.startsWith("http://") || process.env.API_DOMAIN.startsWith("https://")
-    ? validateApiOrigin(process.env.API_DOMAIN)
-    : validateApiOrigin(`https://${process.env.API_DOMAIN}`))
-  : defaultApiOrigin;
+// Extract scheme+host only (strip any path) for use in CSP and rewrite destination.
+// Empty string when the env var is a relative path — 'self' in CSP covers same-origin.
+const apiOrigin = apiIsFullUrl ? new URL(NEXT_PUBLIC_API_URL).origin : "";
 
 const nextConfig = {
   transpilePackages: ["mapbox-gl", "@fieldtrack/types"],
@@ -45,34 +29,50 @@ const nextConfig = {
     minimumCacheTTL: 3600,
   },
   async headers() {
+    const connectSources = [
+      "'self'",
+      "https://*.supabase.co",      // Supabase auth, realtime, storage
+      "https://*.tiles.mapbox.com", // Mapbox raster / vector tiles
+      "https://api.mapbox.com",     // Mapbox geocoding, directions, styles
+      "https://events.mapbox.com",  // Mapbox telemetry
+    ];
+    // Only add the API origin when it is a full URL — same-origin requests
+    // (/api/proxy path) are already covered by 'self' above.
+    if (apiOrigin) {
+      connectSources.push(apiOrigin);
+    }
+
     return [
       {
-        source: '/:path*',
+        source: "/:path*",
         headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
-            key: 'X-Frame-Options',
-            value: 'SAMEORIGIN',
-          },
-          {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
-          },
-          {
-            key: 'Referrer-Policy',
-            value: 'strict-origin-when-cross-origin',
-          },
-          {
-            key: 'Content-Security-Policy',
-            value: `default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${apiOrigin} https://*.supabase.co; frame-ancestors 'self';`,
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline'",
+              // blob: required for Mapbox GL sprite / image atlas
+              "img-src 'self' data: blob: https:",
+              "font-src 'self' data:",
+              // Mapbox GL v3 spawns blob: Web Workers for tile decoding
+              "worker-src blob:",
+              "child-src blob:",
+              `connect-src ${connectSources.join(" ")}`,
+              "frame-ancestors 'self'",
+            ].join("; "),
           },
         ],
       },
     ];
   },
   async rewrites() {
-    // Always expose a server-side proxy to avoid CORS issues on any deployment.
-    // Set NEXT_PUBLIC_API_URL=/api/proxy in Vercel (or any non-localhost deploy)
-    // so browser requests are same-origin and never trigger CORS preflight.
+    // Configure the server-side proxy only when NEXT_PUBLIC_API_URL is a full URL.
+    // Skipping for relative paths avoids an infinite routing loop.
+    if (!apiIsFullUrl) return [];
     return [
       {
         source: "/api/proxy/:path*",

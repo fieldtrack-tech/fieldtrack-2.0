@@ -475,6 +475,23 @@ jobs:
           fi
           echo "✓ CORS_ORIGIN is set"
 
+      - name: Validate environment contract before deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            cd "$DEPLOY_ROOT"
+            git fetch origin
+            git reset --hard origin/master
+            chmod +x apps/api/scripts/validate-env.sh
+            echo "=== Pre-deploy environment validation ==="
+            ./apps/api/scripts/validate-env.sh --check-monitoring
+            echo "✓ Environment contract validated"
+
       - name: Blue-Green deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -486,9 +503,8 @@ jobs:
             T0=$(date +%s)
             export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
-            git fetch origin
-            git reset --hard origin/master
             chmod +x apps/api/scripts/deploy-bluegreen.sh
+            # Environment already validated in previous step
             ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
@@ -522,20 +538,26 @@ jobs:
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
 
-            API_DOMAIN=$(grep -E '^API_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d= -f2-)
+            # Load env from apps/api/.env — exports DEPLOY_ROOT, API_HOSTNAME, and all
+            # app variables. DEPLOY_ROOT is already exported above; load-env.sh uses it.
+            source "$DEPLOY_ROOT/apps/api/scripts/load-env.sh"
+
             FRONTEND_DOMAIN=$(grep -E '^FRONTEND_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d= -f2-)
 
-            if [ -z "${API_DOMAIN:-}" ] || [ -z "${FRONTEND_DOMAIN:-}" ]; then
-              echo "::error::API_DOMAIN or FRONTEND_DOMAIN not found in infra/.env.monitoring"
+            if [ -z "${FRONTEND_DOMAIN:-}" ]; then
+              echo "::error::FRONTEND_DOMAIN not found in infra/.env.monitoring"
               exit 1
             fi
+
+            echo "✓ API_HOSTNAME:    $API_HOSTNAME"
+            echo "✓ FRONTEND_DOMAIN: $FRONTEND_DOMAIN"
 
             echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, port: $BACKEND_PORT) ==="
             sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
             NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
             sed \
               -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
-              -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
+              -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
               -e "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" \
               "$INFRA_DIR/nginx/fieldtrack.conf" > "$NGINX_TMP"
             sudo cp "$NGINX_TMP" "$NGINX_LIVE"

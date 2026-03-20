@@ -82,7 +82,7 @@ chmod +x apps/api/scripts/rollback.sh
 
 5. **Nginx Configuration Error**
    - Check template substitution
-   - Verify API_DOMAIN set correctly
+   - Verify API_HOSTNAME set correctly (derived from API_BASE_URL in apps/api/.env)
    - Test nginx config: `sudo nginx -t`
 
 ## Prevention

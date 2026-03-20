@@ -1,5 +1,29 @@
 #!/bin/bash
 set -euo pipefail
+set -x
+trap 'echo "❌ Failed at line $LINENO"' ERR
+
+# ── CI Mode Support ────────────────────────────────────────────────────────────
+# When CI_MODE=true, the script simulates deployment without side effects
+CI_MODE="${CI_MODE:-false}"
+SKIP_EXTERNAL_SERVICES="${SKIP_EXTERNAL_SERVICES:-false}"
+
+# Safety guard: prevent production misuse
+if [ "$CI_MODE" != "true" ] && [ "$SKIP_EXTERNAL_SERVICES" = "true" ]; then
+    echo "❌ ERROR: SKIP_EXTERNAL_SERVICES=true is only allowed in CI_MODE"
+    echo "   This would deploy a container without Redis/Supabase/BullMQ to production"
+    exit 1
+fi
+
+if [ "$CI_MODE" = "true" ]; then
+    echo "========================================="
+    echo "CI MODE ENABLED"
+    echo "Simulating deployment without side effects"
+    if [ "$SKIP_EXTERNAL_SERVICES" = "true" ]; then
+        echo "External services (Redis/Supabase/BullMQ) will be skipped"
+    fi
+    echo "========================================="
+fi
 
 IMAGE="ghcr.io/fieldtrack-tech/fieldtrack-backend:${1:-latest}"
 IMAGE_SHA="${1:-latest}"
@@ -18,18 +42,14 @@ NETWORK="fieldtrack_network"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Deployment root must be explicitly defined
-DEPLOY_USER="${DEPLOY_USER:-$(whoami)}"
-# Fallback to default path if not set (prevents SSH context issues)
-DEPLOY_ROOT="${DEPLOY_ROOT:-/home/ashish/FieldTrack-2.0}"
+# Load and validate environment.
+# Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
+# Exports all variables from apps/api/.env into this process.
+# Disable trace to prevent secrets from leaking into logs.
+set +x
+source "$SCRIPT_DIR/load-env.sh"
+set -x
 
-if [ -z "$DEPLOY_ROOT" ]; then
-    echo "ERROR: DEPLOY_ROOT environment variable must be set."
-    echo "Example: export DEPLOY_ROOT=/home/ashish/FieldTrack-2.0"
-    exit 1
-fi
-
-ENV_FILE="$DEPLOY_ROOT/apps/api/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
 NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
 ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
@@ -39,85 +59,36 @@ MAX_HISTORY=5
 MAX_HEALTH_ATTEMPTS=40
 HEALTH_INTERVAL=3
 
-# ---------------------------------------------------------------------------
-# Pre-flight: resolve API_DOMAIN.
-# Prefer the calling environment (CI sets it explicitly); fall back to the
-# app .env file so direct VPS invocations work without exporting the var.
-# ---------------------------------------------------------------------------
-if [ -z "${API_DOMAIN:-}" ] && [ -f "$ENV_FILE" ]; then
-    API_DOMAIN=$(grep -E '^API_DOMAIN=' "$ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-fi
-
-if [ -z "${API_DOMAIN:-}" ]; then
-    echo "ERROR: API_DOMAIN is not set and could not be read from $ENV_FILE. Deployment aborted."
-    exit 1
-fi
-
-# Strip any scheme prefix (http:// or https://) — server_name only accepts bare hostnames.
-API_DOMAIN="${API_DOMAIN#https://}"
-API_DOMAIN="${API_DOMAIN#http://}"
+# API_HOSTNAME is already validated and exported by load-env.sh.
+# It is the bare hostname derived from API_BASE_URL (e.g. api.fieldtrack.app).
+echo "✓ API_HOSTNAME: $API_HOSTNAME"
 
 # ---------------------------------------------------------------------------
-# Pre-flight: validate API_DOMAIN is consistent with API_BASE_URL.
-# Both values must agree on the hostname so nginx and the API agree on identity.
-# Misconfiguration here causes subtle failures (wrong cert, wrong CORS, etc.)
+# Pre-flight: full env contract validation.
+# Covers required vars, API_BASE_URL format, API_HOSTNAME derivation, and
+# METRICS_SCRAPE_TOKEN alignment between apps/api/.env and infra/.env.monitoring.
+# validate-env.sh is self-sufficient (sources load-env.sh internally).
+# Disable trace to prevent token values from leaking into logs.
+# validate-env.sh exits non-zero on any failure — set -e aborts the deploy here.
 # ---------------------------------------------------------------------------
-if [ -f "$ENV_FILE" ]; then
-    API_BASE_URL_VAL=$(grep -E '^API_BASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-    if [ -n "$API_BASE_URL_VAL" ]; then
-        # Extract just the hostname from the URL (strips scheme + trailing slash/path).
-        API_BASE_HOST="${API_BASE_URL_VAL#https://}"
-        API_BASE_HOST="${API_BASE_HOST#http://}"
-        API_BASE_HOST="${API_BASE_HOST%%/*}"
-        if [ "$API_DOMAIN" != "$API_BASE_HOST" ]; then
-            echo "ERROR: API_DOMAIN / API_BASE_URL mismatch — deployment aborted."
-            echo "  API_DOMAIN:   $API_DOMAIN"
-            echo "  API_BASE_URL: $API_BASE_URL_VAL  (resolved host: $API_BASE_HOST)"
-            echo ""
-            echo "API_DOMAIN must equal the hostname portion of API_BASE_URL."
-            echo "Fix both values in $ENV_FILE before retrying."
-            exit 1
-        fi
-        echo "✓ API_DOMAIN matches API_BASE_URL host ($API_DOMAIN)"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# Pre-flight: validate METRICS_SCRAPE_TOKEN consistency.
-# The token must match between API and Prometheus or scraping will silently
-# fail and alerts will go blind. Fail fast here instead of deploying broken
-# monitoring.
-# ---------------------------------------------------------------------------
-MONITORING_ENV_FILE="$REPO_DIR/infra/.env.monitoring"
-if [ -f "$MONITORING_ENV_FILE" ]; then
-    API_TOKEN=$(grep -E '^METRICS_SCRAPE_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "")
-    PROM_TOKEN=$(grep -E '^METRICS_SCRAPE_TOKEN=' "$MONITORING_ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "")
-    
-    if [ -n "$API_TOKEN" ] && [ -n "$PROM_TOKEN" ] && [ "$API_TOKEN" != "$PROM_TOKEN" ]; then
-        echo "ERROR: METRICS_SCRAPE_TOKEN mismatch detected!"
-        echo "  API token:        $ENV_FILE"
-        echo "  Prometheus token: $MONITORING_ENV_FILE"
-        echo ""
-        echo "These must be identical or Prometheus scraping will fail silently."
-        echo "Update both files with the same token value."
-        exit 1
-    fi
-    
-    if [ -n "$API_TOKEN" ] && [ -z "$PROM_TOKEN" ]; then
-        echo "WARNING: METRICS_SCRAPE_TOKEN set in API but not in Prometheus config."
-        echo "Prometheus will fail to scrape metrics. Update $MONITORING_ENV_FILE"
-    fi
-fi
+echo "--- Pre-flight: env contract validation ---"
+set +x
+"$SCRIPT_DIR/validate-env.sh" --check-monitoring
+set -x
 
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
 echo "========================================="
 echo "Image SHA: $IMAGE_SHA"
 
-echo "[1/7] Pulling image..."
-docker pull "$IMAGE"
+echo "[1/8] Pulling image..."
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Skipping image pull (using local image)"
+else
+    docker pull "$IMAGE"
+fi
 
-echo "[2/7] Detecting active container..."
+echo "[2/8] Detecting active container..."
 
 # Read active slot from state file (first deploy defaults to green → blue becomes inactive)
 if [ -f "$ACTIVE_SLOT_FILE" ] && [ "$(cat "$ACTIVE_SLOT_FILE")" = "blue" ]; then
@@ -141,7 +112,18 @@ fi
 echo "Active container   : $ACTIVE ($ACTIVE_PORT)"
 echo "Inactive container : $INACTIVE ($INACTIVE_PORT)"
 
-echo "[3/7] Starting inactive container..."
+echo "[3/8] Starting inactive container..."
+
+# CI MODE: Ensure Docker network exists
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Ensuring Docker network exists..."
+    if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
+        docker network create "$NETWORK"
+        echo "✓ Created network: $NETWORK"
+    else
+        echo "✓ Network already exists: $NETWORK"
+    fi
+fi
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
     docker rm -f "$INACTIVE_NAME"
@@ -153,16 +135,26 @@ docker run -d \
   -p "127.0.0.1:$INACTIVE_PORT:$APP_PORT" \
   --restart unless-stopped \
   --env-file "$ENV_FILE" \
+  -e CI_MODE="${CI_MODE:-false}" \
+  -e SKIP_EXTERNAL_SERVICES="${SKIP_EXTERNAL_SERVICES:-false}" \
   "$IMAGE"
 
-echo "[4/7] Waiting for readiness check..."
+echo "[4/8] Waiting for readiness check..."
 
 # Give the server a moment to boot
 sleep 5
 
 ATTEMPT=0
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2>&1; do
+# CI MODE: Use /health (no dependencies)
+# Production: Use /ready (validates Redis, Supabase, BullMQ)
+if [ "$CI_MODE" = "true" ]; then
+    HEALTH_ENDPOINT="/health"
+else
+    HEALTH_ENDPOINT="/ready"
+fi
+
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT" >/dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT+1))
 
     # Check if container crashed during health check
@@ -178,6 +170,7 @@ until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
         echo "Readiness check failed after $MAX_HEALTH_ATTEMPTS attempts."
+        echo "Endpoint: http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT"
 
         echo "===== Container logs ($INACTIVE_NAME) ====="
         docker logs "$INACTIVE_NAME" --tail 100 || true
@@ -194,54 +187,141 @@ done
 
 echo "Readiness check passed."
 
-echo "[5/7] Switching nginx upstream..."
+echo "[5/8] Switching nginx upstream..."
 
-# Backup goes to /etc/nginx/ (not sites-enabled/) so nginx does not load it
-# during validation and trigger a duplicate-upstream error.
-NGINX_BACKUP="/etc/nginx/fieldtrack.conf.bak.$(date +%s)"
-NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Skipping nginx configuration (no side effects)"
+else
+    # Backup goes to /etc/nginx/ (not sites-enabled/) so nginx does not load it
+    # during validation and trigger a duplicate-upstream error.
+    NGINX_BACKUP="/etc/nginx/fieldtrack.conf.bak.$(date +%s)"
+    NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
 
-# Generate a fresh nginx config from the repo template.
-# Only __BACKEND_PORT__ and __API_DOMAIN__ are substituted — nothing else.
-sed \
-    -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
-    -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
-    "$NGINX_TEMPLATE" > "$NGINX_TMP"
+    # Generate a fresh nginx config from the repo template.
+    # Only __BACKEND_PORT__ and __API_HOSTNAME__ are substituted — nothing else.
+    sed \
+        -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
+        -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
+        "$NGINX_TEMPLATE" > "$NGINX_TMP"
 
-# Save the current live config so we can restore it if validation fails.
-sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
+    # Save the current live config so we can restore it if validation fails.
+    sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
 
-# Install the generated config.
-sudo cp "$NGINX_TMP" "$NGINX_CONF"
-rm -f "$NGINX_TMP"
+    # Install the generated config.
+    sudo cp "$NGINX_TMP" "$NGINX_CONF"
+    rm -f "$NGINX_TMP"
 
-# Remove any stale backup files that were accidentally left in sites-enabled/
-# by previous deployments. Nginx loads all files in this directory and a
-# leftover backup defines a duplicate upstream, failing the config test.
-sudo rm -f /etc/nginx/sites-enabled/fieldtrack.conf.bak.*
-
-echo "[6/7] Validating and reloading nginx..."
-
-if ! sudo nginx -t 2>&1; then
-    echo "ERROR: nginx configuration test failed. Restoring backup..."
-    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
-    echo "Backup restored. Deployment aborted."
-    exit 1
+    # Remove any stale backup files that were accidentally left in sites-enabled/
+    # by previous deployments. Nginx loads all files in this directory and a
+    # leftover backup defines a duplicate upstream, failing the config test.
+    sudo rm -f /etc/nginx/sites-enabled/fieldtrack.conf.bak.*
 fi
 
-sudo systemctl reload nginx
+echo "[6/8] Validating and reloading nginx..."
 
-# Persist new active slot so the next deploy reads it correctly
-echo "$INACTIVE" > "$ACTIVE_SLOT_FILE"
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Skipping nginx reload (no side effects)"
+else
+    if ! sudo nginx -t 2>&1; then
+        echo "ERROR: nginx configuration test failed. Restoring backup..."
+        sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+        echo "Backup restored. Deployment aborted."
+        exit 1
+    fi
 
-echo "[7/7] Cleaning old container..."
+    sudo systemctl reload nginx
 
-docker rm -f "$ACTIVE_NAME" || true
+    # Persist new active slot so the next deploy reads it correctly
+    echo "$INACTIVE" > "$ACTIVE_SLOT_FILE"
+fi
+
+echo "[7/8] Post-deploy public health check..."
+
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Skipping public health check (DNS/TLS not available in CI)"
+    echo "✓ Internal health check already passed in step 4"
+else
+    # Dual validation strategy:
+    #   1. Internal check (127.0.0.1:$INACTIVE_PORT/health or /ready) — already passed in step 4
+    #      This is the source of truth: container is healthy and serving traffic.
+    #   2. External check (https://$API_HOSTNAME/health) — validates edge routing
+    #      Tests TLS, DNS, nginx upstream, and firewall. Failure here triggers rollback
+    #      because the container is unreachable from the internet despite being healthy.
+    #
+    # Brief settle time — nginx needs a moment to apply the new upstream config
+    # before forwarding connections cleanly.
+    sleep 3
+    _PUBLIC_HEALTH_URL="https://$API_HOSTNAME/health"
+    echo "  Probing: $_PUBLIC_HEALTH_URL"
+    _PUBLIC_CHECK_PASSED=false
+    for _attempt in 1 2 3; do
+        if curl --max-time 10 -fsS "$_PUBLIC_HEALTH_URL" >/dev/null 2>&1; then
+            _PUBLIC_CHECK_PASSED=true
+            break
+        fi
+        echo "  Attempt $_attempt/3 failed — waiting 5s..."
+        sleep 5
+    done
+
+    if [ "$_PUBLIC_CHECK_PASSED" != "true" ]; then
+        echo "❌ POST-DEPLOY PUBLIC HEALTH CHECK FAILED: $_PUBLIC_HEALTH_URL"
+        echo "   Container passed internal readiness but is not reachable publicly."
+        echo "   Possible causes: TLS cert, DNS, nginx upstream config, firewall."
+        echo ""
+        echo "   Restoring previous nginx config and slot..."
+        sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+        if sudo nginx -t 2>&1 && sudo systemctl reload nginx; then
+            echo "   ✓ Previous nginx config restored."
+        else
+            echo "   ⚠ Could not restore nginx config automatically — check manually."
+        fi
+        echo "$ACTIVE" > "$ACTIVE_SLOT_FILE"
+        docker rm -f "$INACTIVE_NAME" || true
+        # Auto-rollback to previous image — but only if this deploy is not itself
+        # an auto-rollback, to prevent an infinite loop:
+        #   deploy → fail → rollback.sh → deploy(prev) → fail → (stop here)
+        if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
+            echo ""
+            echo "Triggering automatic rollback to previous stable image..."
+            export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+            if ! "$SCRIPT_DIR/rollback.sh" --auto; then
+                echo ""
+                echo "========================================="
+                echo "❌ CRITICAL: ROLLBACK FAILED"
+                echo "========================================="
+                echo "Both deployment and automatic rollback have failed."
+                echo "System state: UNDEFINED"
+                echo "Manual intervention required immediately."
+                echo "========================================="
+                exit 2
+            fi
+        else
+            echo "Already in rollback sequence — stopping without recursive rollback."
+        fi
+        exit 1
+    fi
+    unset _PUBLIC_HEALTH_URL _PUBLIC_CHECK_PASSED _attempt
+    echo "✓ Public health check passed."
+fi
+
+echo "[8/8] Cleaning old container..."
+
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Skipping old container cleanup (no active container in CI)"
+else
+    docker rm -f "$ACTIVE_NAME" || true
+fi
 
 echo "========================================="
 echo "Deployment successful."
 echo "$INACTIVE_NAME container is now LIVE."
 echo "========================================="
+
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Skipping deploy history and monitoring stack updates"
+    echo "✓ CI deployment simulation completed successfully"
+    exit 0
+fi
 
 # Record successful deployment for rollback capability
 # Maintain history of last MAX_HISTORY deployments
