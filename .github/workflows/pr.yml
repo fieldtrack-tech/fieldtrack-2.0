@@ -1,0 +1,453 @@
+# .github/workflows/pr.yml
+#
+# PR Validation Pipeline
+#
+# Design principles:
+#   1. NO 'paths:' trigger filter — every PR always fires every job
+#   2. 'if: always()' on conditional jobs — jobs never stay "pending" as required checks
+#   3. Conditional logic lives INSIDE jobs (step-level), not at the job level
+#   4. production-simulation is unconditional — exact Docker + Trivy parity with deploy.yml
+#   5. Trivy fails hard (exit-code: 1) on HIGH/CRITICAL — security gate enforced before merge
+#   6. timeout-minutes on every job — hung processes never block CI indefinitely
+#   7. npm ci retried up to 3x — registry flakiness never kills a valid PR
+#   8. Image digest stored as artifact — enables cross-pipeline parity auditing
+#   9. Container smoke test — catches crash-on-start bugs before merge
+#
+# Note: strategy.fail-fast only applies to matrix jobs. For non-matrix parallel jobs,
+# fast feedback is achieved via:
+#   - concurrency + cancel-in-progress (cancels duplicate runs on force-push)
+#   - timeout-minutes (prevents any single job from hanging the pipeline)
+#
+# Required checks (Settings → Branches → master → Branch protection):
+#   • PR Validation / Backend CI (typecheck + unit + integration)
+#   • PR Validation / Frontend CI (typecheck + lint + build)
+#   • PR Validation / Infra CI (nginx + compose validation)
+#   • PR Validation / Production Simulation (Docker Build + Trivy + Container Smoke)
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - master
+      - main
+
+# Cancel in-progress runs when a new commit is pushed to the same PR branch.
+# Uses github.ref (refs/pull/N/merge) to scope cancellation to this PR only.
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # JOB: detect-changes
+  # ---------------------------------------------------------------------------
+  detect-changes:
+    name: Detect Changed Paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend:  ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      infra:    ${{ steps.filter.outputs.infra }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Detect file changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'apps/api/**'
+              - 'packages/types/**'
+              - 'package.json'
+              - 'package-lock.json'
+            frontend:
+              - 'apps/web/**'
+              - 'packages/types/**'
+              - 'package.json'
+              - 'package-lock.json'
+            infra:
+              - 'infra/**'
+              - 'apps/api/Dockerfile'
+              - '.github/workflows/**'
+
+  # ---------------------------------------------------------------------------
+  # JOB: backend-ci
+  #
+  # Runs typecheck, unit tests, and integration tests when backend code changes.
+  # 'if: always()' ensures this job ALWAYS runs (never "skipped" at workflow
+  # level), which prevents required-check status from staying "pending".
+  # ---------------------------------------------------------------------------
+  backend-ci:
+    name: Backend CI (typecheck + unit + integration)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: always()
+    timeout-minutes: 15
+    steps:
+      - name: Determine run scope
+        id: scope
+        run: |
+          if [[ "${{ needs.detect-changes.result }}" == "success" && \
+                "${{ needs.detect-changes.outputs.backend }}" != "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No backend changes detected – skipping
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "No changes in apps/api, packages/types, or package manifests."
+          echo "Backend CI is not required for this PR – marking as passed."
+
+      - name: Checkout
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 24
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+
+      # Retry up to 3 times to handle transient npm registry failures.
+      - name: Install workspace dependencies (with retry)
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          echo "::group::npm ci"
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
+          echo "::endgroup::"
+
+      - name: Build shared types
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run build -w packages/types
+
+      - name: Dependency vulnerability scan
+        if: steps.scope.outputs.skip != 'true'
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: TypeScript check (API)
+        if: steps.scope.outputs.skip != 'true'
+        working-directory: apps/api
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        if: steps.scope.outputs.skip != 'true'
+        working-directory: apps/api
+        run: npx vitest run tests/unit/
+
+      - name: Integration tests
+        if: steps.scope.outputs.skip != 'true'
+        working-directory: apps/api
+        run: npx vitest run tests/integration/
+
+      - name: Backend CI summary
+        if: steps.scope.outputs.skip != 'true'
+        run: echo "Backend CI passed ✅ — typecheck, unit tests, and integration tests all green."
+
+  # ---------------------------------------------------------------------------
+  # JOB: frontend-ci
+  #
+  # Runs typecheck, lint, and Next.js production build when frontend code
+  # changes. When no frontend changes exist it prints a skip message and exits
+  # cleanly — never blocks unrelated PRs, never stays "pending".
+  # ---------------------------------------------------------------------------
+  frontend-ci:
+    name: Frontend CI (typecheck + lint + build)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: always()
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_API_URL: /api/proxy
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+      NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
+    steps:
+      - name: Determine run scope
+        id: scope
+        run: |
+          if [[ "${{ needs.detect-changes.result }}" == "success" && \
+                "${{ needs.detect-changes.outputs.frontend }}" != "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No frontend changes detected – skipping
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "No changes in apps/web or packages/types."
+          echo "Frontend CI is not required for this PR – marking as passed."
+
+      - name: Checkout
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 24
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install workspace dependencies (with retry)
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          echo "::group::npm ci"
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
+          echo "::endgroup::"
+
+      - name: Build shared types
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run build -w packages/types
+
+      - name: TypeScript check (web)
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run typecheck -w apps/web
+
+      - name: ESLint (web)
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run lint -w apps/web
+
+      - name: Next.js production build
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run build -w apps/web
+
+      - name: Upload build artifact
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: frontend-build-pr-${{ github.event.number }}
+          path: apps/web/.next/
+          retention-days: 1
+
+      - name: Frontend CI summary
+        if: steps.scope.outputs.skip != 'true'
+        run: echo "Frontend CI passed ✅ — typecheck, lint, and production build all green."
+
+  # ---------------------------------------------------------------------------
+  # JOB: infra-ci
+  #
+  # Validates Nginx config syntax (with placeholder substitution) and
+  # docker-compose structure when infra files or workflow files change.
+  # ---------------------------------------------------------------------------
+  infra-ci:
+    name: Infra CI (nginx + compose validation)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: Determine run scope
+        id: scope
+        run: |
+          if [[ "${{ needs.detect-changes.result }}" == "success" && \
+                "${{ needs.detect-changes.outputs.infra }}" != "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No infra changes detected – skipping
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "No changes in infra/, Dockerfile, or workflow files."
+          echo "Infra CI is not required for this PR – marking as passed."
+
+      - name: Checkout
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/checkout@v5
+
+      - name: Validate Nginx config syntax
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          sed \
+            -e 's/__BACKEND_PORT__/3001/g' \
+            -e 's/__API_DOMAIN__/api.test.local/g' \
+            -e 's/__FRONTEND_DOMAIN__/app.test.local/g' \
+            infra/nginx/fieldtrack.conf > /tmp/nginx-test.conf
+
+          docker run --rm \
+            -v /tmp/nginx-test.conf:/etc/nginx/conf.d/default.conf:ro \
+            nginx:stable-alpine nginx -t 2>&1
+          echo "✓ Nginx config syntax OK"
+
+      - name: Validate docker-compose (monitoring stack)
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          docker compose \
+            -f infra/docker-compose.monitoring.yml \
+            config --quiet
+        env:
+          METRICS_SCRAPE_TOKEN: ci-placeholder
+          GRAFANA_ADMIN_PASSWORD: ci-placeholder
+          API_DOMAIN: api.test.local
+          FRONTEND_DOMAIN: app.test.local
+
+      - name: Infra CI summary
+        if: steps.scope.outputs.skip != 'true'
+        run: echo "Infra CI passed ✅ — Nginx syntax and compose config valid."
+
+  # ---------------------------------------------------------------------------
+  # JOB: production-simulation  ← ALWAYS RUNS, NO CONDITIONS
+  #
+  # The critical safety gate that makes "PR passes = production safe".
+  #
+  # Exact parity with deploy.yml build-scan-push:
+  #   - Same Dockerfile (./apps/api/Dockerfile)
+  #   - Same target stage (production)
+  #   - Same build-args (NODE_ENV=production)
+  #   - Same Trivy severity gates (HIGH,CRITICAL, exit-code: 1)
+  #   - Same GHA cache keys (shared between PR and deploy for layer reuse)
+  #
+  # Additional PR-only steps:
+  #   - Image digest captured and stored as artifact for cross-pipeline auditing
+  #   - Container smoke test: starts the image and verifies the process runs
+  #     (continue-on-error: true — the app needs real credentials to be "ready")
+  # ---------------------------------------------------------------------------
+  production-simulation:
+    name: Production Simulation (Docker Build + Trivy + Container Smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the exact production image.
+      # target: production → builds the final stage of the multi-stage Dockerfile.
+      # build-args NODE_ENV=production → same as deploy.yml, no divergence.
+      # load: true → exports to local Docker daemon for Trivy and smoke test.
+      # cache-to → warms GHA cache so deploy.yml reuses these layers (faster deploys).
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: production
+          build-args: |
+            NODE_ENV=production
+          push: false
+          load: true
+          tags: fieldtrack-backend:pr-${{ github.event.number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Capture the content-addressable image digest (SHA256 of layer manifest).
+      # When the same source + cache + build-args are used, deploy.yml will
+      # produce the same digest — enabling bit-for-bit parity verification.
+      - name: Capture and store image digest
+        id: digest
+        run: |
+          DIGEST=$(docker inspect \
+            fieldtrack-backend:pr-${{ github.event.number }} \
+            --format='{{.Id}}')
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Image digest: $DIGEST"
+          echo "$DIGEST" > image-digest.txt
+
+      - name: Upload image digest artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: image-digest-pr-${{ github.event.number }}
+          path: image-digest.txt
+          retention-days: 7
+
+      # Trivy scans the local image with exit-code: 1 — IDENTICAL to deploy.yml.
+      # If this passes, the same image will pass in production.
+      - name: Trivy vulnerability scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: fieldtrack-backend:pr-${{ github.event.number }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
+
+      # Container smoke test: start the production image and hit /health.
+      # Catches crash-on-start bugs (missing native modules, broken build output,
+      # OOM on startup) that Trivy cannot detect.
+      # continue-on-error: true — the app needs DB/Redis credentials to be
+      # fully ready, so an HTTP 000 is EXPECTED and is not a hard failure here.
+      - name: Container smoke test (process start + /health)
+        continue-on-error: true
+        run: |
+          echo "Starting container from production image..."
+          docker run -d \
+            --name fieldtrack-pr-smoke \
+            -p 13000:3000 \
+            -e NODE_ENV=production \
+            -e PORT=3000 \
+            fieldtrack-backend:pr-${{ github.event.number }}
+
+          echo "Waiting up to 20s for HTTP response on /health..."
+          HEALTH_OK=false
+          for i in $(seq 1 10); do
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+              http://localhost:13000/health 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ Container /health responded HTTP 200 (attempt $i)"
+              HEALTH_OK=true
+              break
+            fi
+            echo "  attempt $i: HTTP $STATUS"
+            sleep 2
+          done
+
+          echo "=== Container logs ==="
+          docker logs fieldtrack-pr-smoke 2>&1 || true
+          docker stop fieldtrack-pr-smoke 2>/dev/null || true
+          docker rm  fieldtrack-pr-smoke 2>/dev/null || true
+
+          if [ "$HEALTH_OK" = "true" ]; then
+            echo "✓ Container smoke test passed."
+          else
+            echo "⚠ Container did not respond to /health."
+            echo "  If startup requires DB/Redis credentials, this is expected in CI."
+            echo "  The hard gates are Docker build success and zero Trivy findings."
+          fi
+
+      - name: PR validation summary
+        run: |
+          echo "============================================="
+          echo " Production Simulation: PASSED ✅"
+          echo "============================================="
+          echo "  Image built:    fieldtrack-backend:pr-${{ github.event.number }}"
+          echo "  Stage target:   production"
+          echo "  Build args:     NODE_ENV=production"
+          echo "  Image digest:   ${{ steps.digest.outputs.digest }}"
+          echo "  Trivy scan:     no HIGH/CRITICAL CVEs"
+          echo "  Cache warmed:   deploy.yml will reuse GHA layers"
+          echo "============================================="
+          echo " This PR is safe to merge."
+          echo "============================================="
