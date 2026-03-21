@@ -34,34 +34,39 @@ jobs:
         if: github.event.pull_request.draft == true
         run: exit 0
 
-      - name: Wait for checks to complete
+      - name: Wait until all required checks succeed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ github.event.pull_request.number }}
 
           for i in {1..20}; do
-            STATUS=$(gh pr view "$PR" --json statusCheckRollup -q '
-              [.statusCheckRollup[] | select(.status != "COMPLETED")] | length
+            FAILING=$(gh pr view "$PR" --json statusCheckRollup -q '
+              [.statusCheckRollup[]
+              | select(.conclusion != null and .conclusion != "SUCCESS")]
+              | length
             ')
 
-            if [ "$STATUS" = "0" ]; then
-              echo "All checks completed"
+            PENDING=$(gh pr view "$PR" --json statusCheckRollup -q '
+              [.statusCheckRollup[]
+              | select(.conclusion == null)]
+              | length
+            ')
+
+            echo "Failing: $FAILING | Pending: $PENDING"
+
+            if [ "$FAILING" = "0" ] && [ "$PENDING" = "0" ]; then
+              echo "All checks passed"
               break
             fi
 
-            echo "Waiting for checks..."
-            sleep 15
+            if [ "$i" = "20" ]; then
+              echo "Timeout waiting for checks"
+              exit 1
+            fi
+
+            sleep 10
           done
-
-          FAILING=$(gh pr view "$PR" --json statusCheckRollup -q '
-            [.statusCheckRollup[] | select(.conclusion != "SUCCESS")] | length
-          ')
-
-          if [ "$FAILING" != "0" ]; then
-            echo "Some checks failed"
-            exit 1
-          fi
 
       - name: Merge PR
         env:
