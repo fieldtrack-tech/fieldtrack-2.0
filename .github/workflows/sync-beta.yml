@@ -30,8 +30,8 @@ jobs:
         run: |
           git fetch origin
           git checkout beta
-          git reset --hard origin/master
-          git push origin beta --force-with-lease
+          git merge origin/master --no-edit
+          git push origin beta
 
-          echo "beta synced with master"
+          echo "beta synced with master via merge"
           git log -1 --oneline
