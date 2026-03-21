@@ -26,7 +26,12 @@ jobs:
       - name: Generate commit summary
         id: summary
         run: |
-          COMMITS=$(git log origin/master..origin/beta --pretty=format:"- %s")
+          COMMITS=$(git log origin/master..origin/beta \
+            --no-merges \
+            --pretty=format:"%s" \
+            | awk '!seen[$0]++' \
+            | sed 's/^/- /' \
+            | head -20)
 
           if [ -z "$COMMITS" ]; then
             echo "empty=true" >> $GITHUB_OUTPUT
