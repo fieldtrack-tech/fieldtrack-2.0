@@ -29,28 +29,29 @@ trap '_ft_trap_err "$LINENO"' ERR
 
 # ---------------------------------------------------------------------------
 # STRUCTURED LOGGING  [DEPLOY] ts=<ISO8601> state=<STATE> <key=value ...>
-# { set +x; } 2>/dev/null inside helpers suppresses xtrace for the function
-# body so [DEPLOY] lines are not duplicated by xtrace noise.
+# ALL logging writes to stderr (>&2) so that functions returning values via
+# stdout are never contaminated. stdout = data only; stderr = logs.
+# { set +x; } 2>/dev/null suppresses xtrace noise inside helpers.
 # ---------------------------------------------------------------------------
 _FT_STATE="INIT"
 
 _ft_log() {
     { set +x; } 2>/dev/null
-    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*"
+    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*" >&2
     set -x
 }
 
 _ft_state() {
     { set +x; } 2>/dev/null
     _FT_STATE="$1"; shift
-    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*"
+    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*" >&2
     set -x
 }
 
 _ft_trap_err() {
     { set +x; } 2>/dev/null
     printf '[DEPLOY] ts=%s state=%s level=ERROR msg="unexpected failure at line %s"\n' \
-        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$1"
+        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$1" >&2
     set -x
 }
 
@@ -59,13 +60,13 @@ _ft_trap_err() {
 # ---------------------------------------------------------------------------
 _ft_snapshot() {
     { set +x; } 2>/dev/null
-    printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n'
-    printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/fieldtrack/active-slot}" 2>/dev/null || echo 'MISSING')"
-    printf '[DEPLOY]   nginx_port = %s\n' "$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "${NGINX_CONF:-/etc/nginx/sites-enabled/fieldtrack.conf}" 2>/dev/null | head -1 || echo 'unreadable')"
-    printf '[DEPLOY]   containers =\n'
-    docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 2>/dev/null \
-        || printf '[DEPLOY]     (docker ps unavailable)\n'
-    printf '[DEPLOY] -----------------------------------------------------------\n'
+    printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n' >&2
+    printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/fieldtrack/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
+    printf '[DEPLOY]   nginx_port = %s\n' "$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "${NGINX_CONF:-/etc/nginx/sites-enabled/fieldtrack.conf}" 2>/dev/null | head -1 || echo 'unreadable')" >&2
+    printf '[DEPLOY]   containers =\n' >&2
+    docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 1>&2 2>/dev/null \
+        || printf '[DEPLOY]     (docker ps unavailable)\n' >&2
+    printf '[DEPLOY] -----------------------------------------------------------\n' >&2
     set -x
 }
 
@@ -140,8 +141,9 @@ _ft_acquire_lock() {
 _ft_release_lock() {
     { set +x; } 2>/dev/null
     printf '[DEPLOY] ts=%s state=%s msg="releasing deployment lock" pid=%s\n' \
-        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$$"
-    [ -n "${200:-}" ] && exec 200>&- 2>/dev/null || true
+        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$$" >&2
+    # Close FD 200 unconditionally; closing the FD releases the flock.
+    exec 200>&- 2>/dev/null || true
     set -x
 }
 
@@ -185,9 +187,20 @@ _ft_ensure_slot_dir() {
     fi
 }
 
+# Single authoritative validator. Returns 0 for "blue"|"green", 1 otherwise.
+# Logs to stderr on failure so every call site gets a structured error for free.
+_ft_validate_slot() {
+    case "$1" in
+        blue|green) return 0 ;;
+        *) _ft_log "level=ERROR msg='invalid slot value' slot='${1:0:80}'"
+           return 1 ;;
+    esac
+}
+
 _ft_write_slot() {
     local slot="$1"
     [ "$CI_MODE" = "true" ] && return 0
+    _ft_validate_slot "$slot" || return 1
     _ft_ensure_slot_dir
     local slot_tmp
     slot_tmp=$(mktemp "${SLOT_DIR}/active-slot.XXXXXX")
@@ -218,12 +231,18 @@ _ft_resolve_slot() {
     if [ -f "$ACTIVE_SLOT_FILE" ]; then
         local current_slot
         current_slot=$(tr -d '[:space:]' < "$ACTIVE_SLOT_FILE")
-        if [ "$current_slot" = "blue" ] || [ "$current_slot" = "green" ]; then
+        # Guard: detect log contamination in the file (pre-fix corruption defense).
+        # A valid slot is ONLY the literal string "blue" or "green".
+        if [[ "$current_slot" == *DEPLOY* ]] || [[ "$current_slot" == *\[* ]]; then
+            _ft_log "level=WARN msg='slot file contains log contamination -- treating as corrupt, recovering' value=${current_slot:0:80}"
+        elif _ft_validate_slot "$current_slot"; then
             _ft_log "msg='slot file read' slot=$current_slot"
             echo "$current_slot"
             return 0
+        else
+            # _ft_validate_slot already logged the invalid value; fall through to recovery.
+            _ft_log "level=WARN msg='slot file invalid, falling through to container recovery'"
         fi
-        _ft_log "level=WARN msg='slot file has invalid value, recovering' value=${current_slot}"
     else
         _ft_log "level=WARN msg='slot file missing, recovering from container state' path=$ACTIVE_SLOT_FILE"
     fi
@@ -255,6 +274,10 @@ _ft_resolve_slot() {
         recovered_slot="green"
         _ft_log "msg='recovery: no containers running, assuming first deploy' slot=green"
     fi
+
+    # Validate before writing -- recovered_slot must be blue or green.
+    # (_ft_validate_slot logs the error; we just fail the subshell.)
+    _ft_validate_slot "$recovered_slot" || return 1
 
     # Persist the recovered value (atomic write).
     local slot_tmp
@@ -317,7 +340,12 @@ fi
 # ---------------------------------------------------------------------------
 _ft_state "RESOLVE_SLOT" "msg='determining active slot'"
 
-ACTIVE=$(_ft_resolve_slot)
+ACTIVE=$(_ft_resolve_slot) || {
+    _ft_log "level=ERROR msg='_ft_resolve_slot failed or exited non-zero -- cannot continue safely'"
+    exit 1
+}
+ACTIVE=$(printf '%s' "$ACTIVE" | tr -d '[:space:]')
+_ft_validate_slot "$ACTIVE" || exit 1
 
 if [ "$ACTIVE" = "blue" ]; then
     ACTIVE_NAME=$BLUE_NAME;   ACTIVE_PORT=$BLUE_PORT
@@ -505,6 +533,11 @@ else
         if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
             _ft_log "msg='triggering image rollback to previous stable SHA'"
             export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+            # Release the deployment lock BEFORE calling rollback.sh.
+            # rollback.sh re-invokes deploy-bluegreen.sh, which must be able to
+            # acquire the lock. The FIELDTRACK_ROLLBACK_IN_PROGRESS guard prevents
+            # infinite loops; the lock only blocks unrelated concurrent deploys.
+            _ft_release_lock
             if ! "$SCRIPT_DIR/rollback.sh" --auto; then
                 _ft_state "FAILURE" "reason='deploy_and_rollback_both_failed'"
                 _ft_snapshot
