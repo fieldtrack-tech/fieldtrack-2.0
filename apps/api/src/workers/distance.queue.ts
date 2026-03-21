@@ -1,5 +1,18 @@
 import { Queue } from "bullmq";
 import { redisConnectionOptions } from "../config/redis.js";
+import { env } from "../config/env.js";
+import { QueueOverloadedError } from "../utils/errors.js";
+import { queueOverloadEventsTotal } from "../plugins/prometheus.js";
+
+interface DistanceJobData {
+  sessionId: string;
+}
+
+interface DistanceFailedJobData {
+  originalData: DistanceJobData;
+  failedAt: string;
+  reason: string;
+}
 
 // ─── Queue Definition ─────────────────────────────────────────────────────────
 
@@ -35,6 +48,18 @@ const distanceQueue = new Queue("distance-engine", {
  * BullMQ silently ignores duplicate jobIds that are already waiting.
  */
 export async function enqueueDistanceJob(sessionId: string): Promise<void> {
+  const [waiting, delayed] = await Promise.all([
+    distanceQueue.getWaitingCount(),
+    distanceQueue.getDelayedCount(),
+  ]);
+
+  const queueDepth = waiting + delayed;
+  if (queueDepth >= env.MAX_QUEUE_DEPTH) {
+    // Alert hook: emit overload event counter
+    queueOverloadEventsTotal.labels("distance-engine").inc();
+    throw new QueueOverloadedError("distance-engine", queueDepth, env.MAX_QUEUE_DEPTH);
+  }
+
   await distanceQueue.add(
     "recalculate",
     { sessionId },
@@ -48,6 +73,50 @@ export async function enqueueDistanceJob(sessionId: string): Promise<void> {
  */
 export async function getQueueDepth(): Promise<number> {
   return distanceQueue.getWaitingCount();
+}
+
+export const distanceFailedQueue = new Queue<DistanceFailedJobData, void, "dead-letter">(
+  "distance-failed",
+  {
+    connection: redisConnectionOptions,
+    defaultJobOptions: {
+      removeOnComplete: { count: 500 },
+      removeOnFail: false,
+    },
+  },
+);
+
+export async function moveDistanceToDeadLetter(
+  jobData: DistanceJobData,
+  reason: string,
+): Promise<void> {
+  await distanceFailedQueue.add("dead-letter", {
+    originalData: jobData,
+    failedAt: new Date().toISOString(),
+    reason,
+  });
+}
+
+export async function replayDistanceDeadLetter(limit = 100): Promise<number> {
+  const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+  const jobs = await distanceFailedQueue.getJobs(
+    ["waiting", "delayed", "failed", "completed"],
+    0,
+    Math.max(0, boundedLimit - 1),
+    true,
+  );
+
+  let replayed = 0;
+  for (const job of jobs) {
+    const sessionId = job.data.originalData?.sessionId;
+    if (!sessionId) {
+      continue;
+    }
+    await enqueueDistanceJob(sessionId);
+    await job.remove();
+    replayed++;
+  }
+  return replayed;
 }
 
 export { distanceQueue };

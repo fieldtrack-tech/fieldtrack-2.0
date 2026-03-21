@@ -50,6 +50,12 @@ set +x
 source "$SCRIPT_DIR/load-env.sh"
 set -x
 
+if [ "$CI_MODE" = "true" ] && [ "${APP_ENV:-}" = "production" ]; then
+    echo "❌ ERROR: CI_MODE=true cannot run with APP_ENV=production"
+    echo "   This is a safety guard to prevent production-intent deploy simulation misuse."
+    exit 1
+fi
+
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
 NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
 ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"

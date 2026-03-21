@@ -26,6 +26,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const app = Fastify({
     logger: getLoggerConfig(env.APP_ENV),
+    trustProxy: true,
     // Phase 10: HTTP hardening (externalized limits)
     bodyLimit: env.BODY_LIMIT_BYTES,
     connectionTimeout: env.REQUEST_TIMEOUT_MS,
@@ -133,6 +134,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         success: false,
         error: error.message,
         requestId: request.id,
+        code: error.code,
+        details: error.details,
       });
       return;
     }
@@ -193,7 +196,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Skip in CI mode when external services are unavailable.
   if (!skipExternalServices) {
     const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
+    const { adminRetryIntentsRoutes } = await import("./modules/admin/retry-intents.routes.js");
     await app.register(adminQueuesRoutes);
+    await app.register(adminRetryIntentsRoutes);
   }
 
   // Phase 10: Start BullMQ distance worker on boot.

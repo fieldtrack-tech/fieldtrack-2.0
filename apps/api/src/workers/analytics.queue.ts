@@ -1,5 +1,8 @@
 import { Queue } from "bullmq";
 import { redisConnectionOptions } from "../config/redis.js";
+import { env } from "../config/env.js";
+import { QueueOverloadedError } from "../utils/errors.js";
+import { queueOverloadEventsTotal } from "../plugins/prometheus.js";
 
 // ─── Dead Letter Queue Payload ────────────────────────────────────────────────
 
@@ -115,6 +118,18 @@ export async function enqueueAnalyticsJob(
   organizationId: string,
   employeeId: string,
 ): Promise<void> {
+  const [waiting, delayed] = await Promise.all([
+    analyticsQueue.getWaitingCount(),
+    analyticsQueue.getDelayedCount(),
+  ]);
+
+  const queueDepth = waiting + delayed;
+  if (queueDepth >= env.MAX_QUEUE_DEPTH) {
+    // Alert hook: emit overload event counter
+    queueOverloadEventsTotal.labels("analytics").inc();
+    throw new QueueOverloadedError("analytics", queueDepth, env.MAX_QUEUE_DEPTH);
+  }
+
   await analyticsQueue.add(
     "update-metrics",
     { sessionId, organizationId, employeeId },

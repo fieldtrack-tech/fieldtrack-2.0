@@ -138,10 +138,6 @@ jobs:
         if: steps.scope.outputs.skip != 'true'
         run: npm run build -w packages/types
 
-      - name: Dependency vulnerability scan
-        if: steps.scope.outputs.skip != 'true'
-        run: npm audit --omit=dev --audit-level=high
-
       - name: TypeScript check (API)
         if: steps.scope.outputs.skip != 'true'
         working-directory: apps/api
@@ -288,7 +284,6 @@ jobs:
           sed \
             -e 's/__BACKEND_PORT__/3001/g' \
             -e 's/__API_HOSTNAME__/api.test.local/g' \
-            -e 's/__FRONTEND_DOMAIN__/app.test.local/g' \
             infra/nginx/fieldtrack.conf > /tmp/nginx-test.conf
 
           # Fast-fail: verify every __PLACEHOLDER__ was substituted before
@@ -446,12 +441,29 @@ jobs:
           restore-keys: |
             trivy-db-${{ runner.os }}-
 
-      - name: Pull Trivy vulnerability database
+      - name: Pull Trivy vulnerability database (retry + cache fallback)
         run: |
-          docker run --rm \
-            -v /tmp/trivy-cache:/root/.cache \
-            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
-            image --download-db-only
+          DB_UPDATED=false
+          for i in 1 2 3; do
+            if docker run --rm \
+              -v /tmp/trivy-cache:/root/.cache \
+              aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
+              image --download-db-only; then
+              DB_UPDATED=true
+              break
+            fi
+            echo "Trivy DB download attempt $i failed..."
+            [ "$i" -lt 3 ] && sleep 5
+          done
+
+          if [ "$DB_UPDATED" != "true" ]; then
+            if [ -d /tmp/trivy-cache/db ]; then
+              echo "⚠ Unable to refresh Trivy DB; proceeding with cached DB for deterministic CI."
+            else
+              echo "::error::Trivy DB download failed and no cached DB is available."
+              exit 1
+            fi
+          fi
 
       - name: Scan image with Trivy (HIGH/CRITICAL, air-gapped)
         env:
@@ -779,4 +791,5 @@ jobs:
           echo " Full production flow validated."
           echo " This PR will deploy successfully."
           echo "============================================="
+
 

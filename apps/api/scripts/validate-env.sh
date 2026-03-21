@@ -90,14 +90,15 @@ printf "  Check monitoring:  %s\n" "$CHECK_MONITORING"
 # =============================================================================
 header "Forbidden variable check (API_DOMAIN)"
 
-# Hard error: API_DOMAIN must not appear ANYWHERE in the repository.
-# Check all env files, scripts, and config files.
-if grep -r "API_DOMAIN" "$REPO_ROOT/apps/api/.env" "$REPO_ROOT/infra/.env.monitoring" 2>/dev/null | grep -v "^#"; then
-    fail "API_DOMAIN found in environment files — this variable has been REMOVED"
+# Hard error: API_DOMAIN assignment must not appear ANYWHERE in the repository.
+# Repository-wide scan (excluding node_modules) to catch drift across scripts
+# and generated env files, not only the two primary env files.
+if grep -r "API_DOMAIN" . --exclude-dir=node_modules 2>/dev/null | grep -E "API_DOMAIN[[:space:]]*="; then
+    fail "API_DOMAIN assignment found in repository — this variable has been REMOVED"
     fail "  Replace with: API_BASE_URL=https://your-domain.com (in apps/api/.env)"
     fail "                API_HOSTNAME=your-domain.com (in infra/.env.monitoring)"
 else
-    pass "API_DOMAIN not found in environment files (correct)"
+    pass "API_DOMAIN assignment not found in repository (correct)"
 fi
 
 # =============================================================================

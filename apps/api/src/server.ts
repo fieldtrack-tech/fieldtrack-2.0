@@ -35,7 +35,11 @@ async function start(): Promise<void> {
     // Skip in CI mode when Redis is unavailable.
     if (process.env.SKIP_EXTERNAL_SERVICES !== "true") {
       const { performStartupRecovery } = await import("./workers/distance.worker.js");
+      const { replayPendingRetryIntents } = await import("./workers/retry-intents.js");
+      const { startRetryIntentCleanupJob } = await import("./workers/retry-cleanup.job.js");
       performStartupRecovery(app);
+      void replayPendingRetryIntents(app);
+      startRetryIntentCleanupJob(app);
     }
   } catch (error) {
     app.log.error(error, "Failed to start server");
