@@ -1,36 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { createHash } from "crypto";
-import { env } from "../config/env.js";
+import { getConfigHash } from "../config/env.js";
 
 interface HealthResponse {
-    status: string;
-    timestamp: string;
-    config_hash: string;
-}
-
-// Compute lazily on first request — the config doesn't change at runtime.
-// Matches the hash emitted by logStartupConfig so /health and the startup
-// log can be cross-referenced without querying Loki.
-let _configHash: string | undefined;
-function getConfigHash(): string {
-  if (!_configHash) {
-    _configHash = createHash("sha256")
-      .update(
-        JSON.stringify({
-          configVersion: env.CONFIG_VERSION,
-          appEnv:        env.APP_ENV,
-          port:          env.PORT,
-          appBaseUrl:    env.APP_BASE_URL      ?? "",
-          apiBaseUrl:    env.API_BASE_URL      ?? "",
-          frontendUrl:   env.FRONTEND_BASE_URL ?? "",
-          serviceName:   env.SERVICE_NAME,
-          corsOrigin:    env.CORS_ORIGIN,
-        }),
-      )
-      .digest("hex")
-      .slice(0, 12);
-  }
-  return _configHash;
+        status: string;
+        timestamp: string;
+        config_hash: string;
 }
 
 interface ReadyResponse {
@@ -40,6 +14,11 @@ interface ReadyResponse {
         redis: "ok" | "error";
         supabase: "ok" | "error";
         bullmq: "ok" | "error";
+        workers?: {
+            status: "ok" | "error" | "skipped";
+            active: number;
+            expected: number;
+        };
     };
 }
 
@@ -94,6 +73,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         const { supabaseServiceClient } = await import("../config/supabase.js");
         const { distanceQueue } = await import("../workers/distance.queue.js");
         const { analyticsQueue } = await import("../workers/analytics.queue.js");
+        const { shouldStartWorkers, areWorkersStarted } = await import("../workers/startup.js");
 
         const checks: ReadyResponse["checks"] = {
             redis: "error",
@@ -126,6 +106,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         checks.redis = redisResult.status === "fulfilled" ? "ok" : "error";
         checks.supabase = supabaseResult.status === "fulfilled" ? "ok" : "error";
         checks.bullmq = bullmqResult.status === "fulfilled" ? "ok" : "error";
+        if (!shouldStartWorkers(process.env)) {
+            checks.workers = { status: "skipped", active: 0, expected: 2 };
+        } else {
+            const started = areWorkersStarted();
+            checks.workers = { status: started ? "ok" : "error", active: started ? 2 : 0, expected: 2 };
+        }
 
         const ready = checks.redis === "ok" && checks.supabase === "ok" && checks.bullmq === "ok";
         if (!ready) {

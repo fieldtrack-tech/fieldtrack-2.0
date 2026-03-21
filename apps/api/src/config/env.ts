@@ -463,7 +463,7 @@ let _envCache: EnvConfig | undefined;
 
 export function getEnv(): EnvConfig {
   if (!_envCache) {
-    _envCache = parseEnv();
+    _envCache = Object.freeze(parseEnv());
   }
   return _envCache;
 }
@@ -557,6 +557,33 @@ export function getPrivateEnv() {
 
 export type PrivateEnvConfig = ReturnType<typeof getPrivateEnv>;
 
+let _configHashCache: string | undefined;
+
+/**
+ * Stable short fingerprint of deployment-relevant configuration values.
+ * Useful for detecting drift across replicas.
+ */
+export function getConfigHash(): string {
+  if (!_configHashCache) {
+    _configHashCache = createHash("sha256")
+      .update(
+        JSON.stringify({
+          configVersion: env.CONFIG_VERSION,
+          appEnv:        env.APP_ENV,
+          port:          env.PORT,
+          appBaseUrl:    env.APP_BASE_URL      ?? "",
+          apiBaseUrl:    env.API_BASE_URL      ?? "",
+          frontendUrl:   env.FRONTEND_BASE_URL ?? "",
+          serviceName:   env.SERVICE_NAME,
+          corsOrigin:    env.CORS_ORIGIN,
+        }),
+      )
+      .digest("hex")
+      .slice(0, 12);
+  }
+  return _configHashCache;
+}
+
 // ─── Startup config log ───────────────────────────────────────────────────────
 
 /**
@@ -596,24 +623,7 @@ interface MinimalLogger {
  * @param logger - Any logger with an `info(obj, msg)` method (e.g. app.log).
  */
 export function logStartupConfig(logger: MinimalLogger): void {
-  // Config hash — a short fingerprint of all deployment-identity values.
-  // Log this on every boot so mismatches between replicas are immediately
-  // visible in Grafana without diffing individual fields.
-  const configHash = createHash("sha256")
-    .update(
-      JSON.stringify({
-        configVersion: env.CONFIG_VERSION,
-        appEnv:        env.APP_ENV,
-        port:          env.PORT,
-        appBaseUrl:    env.APP_BASE_URL      ?? "",
-        apiBaseUrl:    env.API_BASE_URL      ?? "",
-        frontendUrl:   env.FRONTEND_BASE_URL ?? "",
-        serviceName:   env.SERVICE_NAME,
-        corsOrigin:    env.CORS_ORIGIN,
-      }),
-    )
-    .digest("hex")
-    .slice(0, 12);
+  const configHash = getConfigHash();
 
   logger.info(
     {
