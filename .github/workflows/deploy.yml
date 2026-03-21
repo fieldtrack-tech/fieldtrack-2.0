@@ -579,45 +579,55 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Wait for /health endpoint (60 s timeout)
-        env:
-          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
-        run: |
-          BASE_URL="${FT_API_BASE_URL%/}"
-          echo "Polling ${BASE_URL}/health ..."
-          for i in $(seq 1 30); do
-            BODY=$(curl -sf "${BASE_URL}/health" 2>/dev/null || echo "")
-            if echo "$BODY" | grep -q '"status":"ok"'; then
-              echo "✓ /health returned 200 with status:ok (attempt $i)"
-              exit 0
-            fi
-            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/health" || echo "000")
-            echo "  attempt $i: HTTP $STATUS — waiting 2s..."
-            sleep 2
-          done
-          echo "✗ /health did not return status:ok after 60 s"
-          echo "  Last response body: $(curl -sS "${BASE_URL}/health" 2>&1 | head -c 500)"
-          exit 1
+      - name: Wait for /health endpoint (via VPS)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            echo "=== Checking /health via VPS ==="
+            API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
+            for i in $(seq 1 30); do
+              BODY=$(curl -sS \
+                --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                https://${API_HOSTNAME}/health \
+                --insecure 2>/dev/null || echo "")
+              if echo "$BODY" | grep -q '"status":"ok"'; then
+                echo "✓ /health OK (attempt $i)"
+                exit 0
+              fi
+              echo "Attempt $i failed"
+              [ $i -lt 30 ] && sleep 2
+            done
+            echo "❌ /health failed"
+            exit 1
 
-      - name: Wait for /ready endpoint (30 s timeout)
-        env:
-          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
-        run: |
-          BASE_URL="${FT_API_BASE_URL%/}"
-          echo "Polling ${BASE_URL}/ready ..."
-          for i in $(seq 1 15); do
-            BODY=$(curl -sf "${BASE_URL}/ready" 2>/dev/null || echo "")
-            if echo "$BODY" | grep -q '"status":"ready"'; then
-              echo "✓ /ready returned 200 with status:ready (attempt $i)"
-              exit 0
-            fi
-            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${BASE_URL}/ready" || echo "000")
-            echo "  attempt $i: HTTP $STATUS — waiting 2s..."
-            sleep 2
-          done
-          echo "✗ /ready did not return status:ready after 30 s"
-          echo "  Last response body: $(curl -sS "${BASE_URL}/ready" 2>&1 | head -c 500)"
-          exit 1
+      - name: Wait for /ready endpoint (via VPS)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            echo "=== Checking /ready via VPS ==="
+            API_HOSTNAME="${API_HOSTNAME:-api.getfieldtrack.app}"
+            for i in $(seq 1 15); do
+              BODY=$(curl -sS \
+                --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                https://${API_HOSTNAME}/ready \
+                --insecure 2>/dev/null || echo "")
+              if echo "$BODY" | grep -q '"status":"ready"'; then
+                echo "✓ /ready OK (attempt $i)"
+                exit 0
+              fi
+              echo "Attempt $i failed"
+              [ $i -lt 15 ] && sleep 2
+            done
+            echo "❌ /ready failed"
+            exit 1
 
       - name: Run smoke tests
         env:
