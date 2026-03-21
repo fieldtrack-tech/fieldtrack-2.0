@@ -441,6 +441,11 @@ jobs:
           restore-keys: |
             trivy-db-${{ runner.os }}-
 
+      - name: Prepare Trivy cache directory
+        run: |
+          mkdir -p /tmp/trivy-cache
+          sudo chown -R "$(id -u):$(id -g)" /tmp/trivy-cache
+
       - name: Pull Trivy vulnerability database (retry + cache fallback)
         run: |
           DB_UPDATED=false
@@ -491,6 +496,13 @@ jobs:
           if [ "$SCAN_PASSED" != "true" ]; then
             echo "::error::Trivy scan failed after 3 attempts — HIGH/CRITICAL vulnerabilities found or scan error."
             exit 1
+          fi
+
+      - name: Restore Trivy cache ownership
+        if: always()
+        run: |
+          if [ -d /tmp/trivy-cache ]; then
+            sudo chown -R "$(id -u):$(id -g)" /tmp/trivy-cache
           fi
 
       # Generate SBOM using the same pinned Trivy image — no extra tool dependency.
