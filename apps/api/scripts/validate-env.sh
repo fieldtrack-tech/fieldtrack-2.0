@@ -270,6 +270,6 @@ else
     printf "  ENV contract:\n"
     printf "  • API_BASE_URL  = full URL    (https://api.example.com)  → apps/api/.env\n"
     printf "  • API_HOSTNAME  = host only   (api.example.com)          → infra/.env.monitoring\n"
-    printf "  • API_DOMAIN    = REMOVED — do not use\n\n"
+    printf "  • API_DOMAIN is deprecated — use API_BASE_URL instead\n\n"
     exit 1
 fi
