@@ -43,20 +43,27 @@ jobs:
           for i in {1..20}; do
             FAILING=$(gh pr view "$PR" --json statusCheckRollup -q '
               [.statusCheckRollup[]
-              | select(.conclusion != null and .conclusion != "SUCCESS")]
+              | select(
+                  (.name | contains("Auto Merge") | not) and
+                  .conclusion != null and
+                  .conclusion != "SUCCESS"
+                )]
               | length
             ')
 
             PENDING=$(gh pr view "$PR" --json statusCheckRollup -q '
               [.statusCheckRollup[]
-              | select(.conclusion == null)]
+              | select(
+                  (.name | contains("Auto Merge") | not) and
+                  .conclusion == null
+                )]
               | length
             ')
 
             echo "Failing: $FAILING | Pending: $PENDING"
 
             if [ "$FAILING" = "0" ] && [ "$PENDING" = "0" ]; then
-              echo "All checks passed"
+              echo "All external checks passed"
               break
             fi
 

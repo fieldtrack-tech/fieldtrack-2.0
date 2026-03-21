@@ -92,25 +92,28 @@ jobs:
         run: |
           PR=${{ steps.check.outputs.pr }}
 
+          # Get existing body
           gh pr view "$PR" --json body -q .body > old_body.txt
 
-          echo "<!-- AUTO-GENERATED:START -->" > new_block.txt
-          cat commits.txt >> new_block.txt
-          echo "<!-- AUTO-GENERATED:END -->" >> new_block.txt
+          # Extract content BEFORE block
+          awk '/<!-- AUTO-GENERATED:START -->/{exit} {print}' old_body.txt > before.txt
 
-          awk '
-            BEGIN {skip=0}
-            /<!-- AUTO-GENERATED:START -->/ {
-              print;
-              system("cat new_block.txt");
-              skip=1;
-              next;
-            }
-            /<!-- AUTO-GENERATED:END -->/ {
-              skip=0;
-              next;
-            }
-            !skip {print}
-            ' old_body.txt > updated_body.txt
+          # Extract content AFTER block
+          awk 'f;/<!-- AUTO-GENERATED:END -->/{f=1}' old_body.txt | tail -n +2 > after.txt
 
-          gh pr edit "$PR" --body-file updated_body.txt
+          # Build new block
+          echo "<!-- AUTO-GENERATED:START -->" > block.txt
+          cat commits.txt >> block.txt
+          echo "<!-- AUTO-GENERATED:END -->" >> block.txt
+
+          # Combine cleanly
+          cat before.txt block.txt after.txt > final_body.txt
+
+          # Skip update if no changes
+          if diff -q old_body.txt final_body.txt > /dev/null 2>&1; then
+            echo "No changes in PR body"
+            exit 0
+          fi
+
+          # Update PR
+          gh pr edit "$PR" --body-file final_body.txt
