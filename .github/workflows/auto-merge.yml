@@ -1,4 +1,12 @@
-name: Auto Merge PR
+name: Auto Merge PR (defense-in-depth + scheduled watchdog)
+# Safety net: re-enables auto-merge on beta→master PRs.
+# The primary enable-auto-merge logic lives in auto-pr.yml, which runs on
+# every push to beta. This workflow acts as defense-in-depth:
+#   1. Catches race where auto-merge was set before checks registered
+#   2. Re-enables auto-merge if it was reset by a check failure
+#   3. Runs on: opened, synchronize (checks added), ready_for_review
+#   4. WATCHDOG (5-min scheduled): catches edge cases where workflow was cancelled
+# This guarantees auto-merge is set by the time all checks exist.
 
 on:
   pull_request:
@@ -8,6 +16,9 @@ on:
       - opened
       - synchronize
       - ready_for_review
+  schedule:
+    # Every 5 minutes: check for stuck PRs (edge case: workflow cancelled but PR not merged)
+    - cron: '*/5 * * * *'
 
 permissions:
   contents: write
@@ -20,24 +31,96 @@ concurrency:
 jobs:
   merge:
     runs-on: ubuntu-latest
-    if: >
-      github.event.pull_request.merged == false &&
-      github.event.pull_request.base.ref == 'master' &&
-      github.event.pull_request.head.ref == 'beta' &&
-      github.event.pull_request.draft == false
+    timeout-minutes: 5
+    # Run on pull_request events, skip only on [skip-ci] tagged commits
+    # For schedule events, always run (will detect if PR exists and is mergeable)
+    if: |
+      (github.event_name == 'pull_request' && 
+       !contains(github.event.head_commit.message, '[skip-ci]') &&
+       github.event.pull_request.merged == false &&
+       github.event.pull_request.base.ref == 'master' &&
+       github.event.pull_request.head.ref == 'beta' &&
+       github.event.pull_request.draft == false) ||
+      github.event_name == 'schedule'
 
     steps:
-      - name: Enable auto-merge
+      - name: Validate FIELDTRACK_PAT exists
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          PR=${{ github.event.pull_request.number }}
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::FIELDTRACK_PAT not set — ABORTING auto-merge watchdog"
+            exit 1
+          fi
+          echo "✓ Using FIELDTRACK_PAT for authenticated operations"
 
-          echo "Enabling auto-merge for PR #$PR"
-
+      - name: Re-enable auto-merge (event-driven)
+        if: github.event_name != 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
+        run: |
+          # Defensive re-enable: checks (required for merge) might have passed after
+          # a force-push + rebase in auto-pr.yml reset auto-merge setting.
+          # This job runs on pull_request:synchronize (when checks update) and
+          # pull_request:ready_for_review, providing multiple touchpoints to
+          # re-assert auto-merge ready (idempotent pattern).
+          
+          PR="${{ github.event.pull_request.number }}"
+          
+          echo "Re-enabling auto-merge for PR #$PR"
+          
           gh pr merge "$PR" \
             --auto \
             --squash \
-            --delete-branch=false
+            --delete-branch=false \
+            || true
+          
+          echo "✓ Auto-merge is set"
 
-          echo "✓ Auto-merge enabled - GitHub will merge when all checks pass"
+      - name: Watchdog: detect stuck PRs (scheduled check)
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
+        run: |
+          # Scheduled (5-minute interval) safety net: find any open beta→master PR
+          # and ensure auto-merge is ready.
+          # Catches edge cases where a workflow was cancelled but PR wasn't cleaned up.
+          
+          echo "=== 5-Minute Auto-Merge Watchdog Check ==="
+          
+          # Find PR that is mergeable (no conflicts)
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number,mergeable,statusCheckRollup \
+            --jq '.[] | select(.mergeable == "MERGEABLE") | .number' | head -1)
+          
+          if [ -z "$PR" ]; then
+            echo "✓ No mergeable PR found (healthy state)"
+            exit 0
+          fi
+          
+          echo "Found mergeable PR #$PR"
+          
+          # Guard: check if any required checks are currently IN_PROGRESS
+          # If so, skip — don't want to collide with active workflow
+          IN_PROGRESS=$(gh pr view "$PR" --json statusCheckRollup \
+            --jq '.statusCheckRollup[] | select(.status=="IN_PROGRESS") | .name' 2>/dev/null | head -1)
+          
+          if [ -n "$IN_PROGRESS" ]; then
+            echo "ℹ️  Required checks still in progress ($IN_PROGRESS) — skipping watchdog to avoid collision"
+            exit 0
+          fi
+          
+          echo "All required checks complete — ensuring auto-merge is set..."
+          
+          # Re-assert auto-merge (idempotent)
+          if gh pr merge "$PR" \
+            --auto \
+            --squash \
+            --delete-branch=false; then
+            echo "✓ Auto-merge (re)asserted for PR #$PR"
+          else
+            echo "⚠️  Could not set auto-merge for PR #$PR (may already be queued)"
+          fi

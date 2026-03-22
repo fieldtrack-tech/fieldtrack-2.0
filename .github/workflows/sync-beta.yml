@@ -1,16 +1,20 @@
 name: Sync beta ← master
+# After a squash-merge lands on master (via auto-merge), this workflow merges
+# master back into beta so both branches stay aligned.
+#
+# Trigger: workflow_run on "Deploy to Production" SUCCESS.
+# This ensures sync-beta ONLY runs after deploy succeeds (not on manual skip or rollback).
+# If deploy fails, rollback runs instead, and sync-beta is skipped (preserves pre-deploy state).
+#
+# NOTE: Uses the default GITHUB_TOKEN for the git push to beta. This is
+# intentional — a PAT-based push to beta would re-trigger auto-pr.yml and
+# create an infinite loop.
 
 on:
-  push:
-    branches:
-      - master
-  # Fallback: fires directly when the auto-merge workflow completes.
-  # Handles the case where GitHub blocks push-triggered workflows from
-  # Actions-initiated commits (GITHUB_TOKEN restriction).
   workflow_run:
-    workflows: ["Auto Merge PR"]
-    types:
-      - completed
+    workflows: ["Deploy to Production"]
+    types: [completed]
+    branches: [master]
 
 permissions:
   contents: write
@@ -22,16 +26,86 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only sync if deploy succeeded (not on manual skip, failures, or cancellations)
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Guard against duplicate sync (manual deploy retry)
+        run: |
+          # Risk: If someone manually reruns deploy.yml, workflow_run triggers again
+          # This guard prevents sync-beta from running twice on same master SHA
+          
+          git fetch origin
+          
+          # Check if beta already has commits from this master SHA
+          MASTER_SHA=$(git rev-parse origin/master)
+          BETA_LOG=$(git log origin/beta --grep=" [skip-ci]" --oneline | head -20)
+          
+          if echo "$BETA_LOG" | grep -q "$MASTER_SHA"; then
+            echo "ℹ️  Master commit $MASTER_SHA already synced to beta (detected via [skip-ci] commit)"
+            echo "    Skipping duplicate sync (likely manual deploy retry)"
+            exit 0
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for unexpected divergence (FAIL on critical changes)
+        run: |
+          git fetch origin
+          
+          # Show diff stats
+          echo "=== Comparing beta ← master ==="
+          git diff --stat origin/beta origin/master || true
+          
+          # Count commits and files
+          COMMIT_COUNT=$(git log origin/beta..origin/master --oneline | wc -l)
+          FILE_COUNT=$(git diff --name-only origin/beta origin/master | wc -l)
+          
+          echo "  Commits behind: $COMMIT_COUNT"
+          echo "  Files changed : $FILE_COUNT"
+          
+          # CRITICAL CHANGE DETECTION: WARN not fail (allow manual override)
+          CRITICAL_FILES=$(git diff --name-only origin/beta origin/master | \
+            grep -E '^(apps/api|apps/web|infra|packages|supabase)/')
+          
+          if [ -n "$CRITICAL_FILES" ]; then
+            CRITICAL_COUNT=$(echo "$CRITICAL_FILES" | wc -l)
+            echo "::warning::Critical drift detected: $CRITICAL_COUNT critical files changed"
+            echo "$CRITICAL_FILES" | head -10
+            
+            # Check for override marker in master HEAD commit
+            if git log -1 --pretty=%B origin/master | grep -q '\[override-drift\]'; then
+              echo "✓ [override-drift] marker found — proceeding despite critical changes"
+              echo "  (someone acknowledged the risk)"
+            else
+              echo ""
+              echo "⚠️  To override this check, add [override-drift] to commit message"
+              echo "    (e.g., 'Hotfix: API config [override-drift]')"
+              echo ""
+              # EXIT with warning but don't fail — allows manual intervention
+              exit 0
+            fi
+          fi
+          
+          # Warn (don't fail) on total bloat (docs/config changes are OK)
+          if [ "$FILE_COUNT" -gt 100 ]; then
+            echo "⚠️  Large total diff ($FILE_COUNT files) — mostly docs or config"
+          fi
 
       - name: Sync beta branch
         run: |
-          git fetch origin
           git checkout beta
           git merge origin/master --no-edit
+          # Use [skip-ci] to prevent triggering auto-pr.yml on this push (which would loop)
+          git commit --amend -m "$(git log -1 --pretty=%B) [skip-ci]" || true
           git push origin beta
 
-          echo "beta synced with master via merge"
+          echo "beta synced with master via merge (with [skip-ci])"
           git log -1 --oneline

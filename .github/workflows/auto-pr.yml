@@ -11,36 +11,60 @@ permissions:
 
 concurrency:
   group: auto-pr-beta
-  cancel-in-progress: false
+  # Cancel older runs when new push arrives — only latest should execute.
+  # Prevents redundant rebase/push/auto-merge work and reduces API call spikes.
+  cancel-in-progress: true
 
 jobs:
   auto-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Skip this workflow on [skip-ci] commits (from sync-beta.yml)
+    if: "!contains(github.event.head_commit.message, '[skip-ci]')"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Validate PAT exists
+        run: |
+          if [ -z "${{ secrets.FIELDTRACK_PAT }}" ]; then
+            echo "::error::FIELDTRACK_PAT secret is not set. Without a PAT, auto-merge commits are attributed to github-actions[bot] and the resulting push to master will NOT trigger deploy.yml."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
 
       - name: Fetch branches
         run: git fetch origin master beta
 
-      - name: Check existing PR
+      - name: Check existing PR (with jitter + exp backoff)
         id: check
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          PR=$(gh pr list \
-            --base master \
-            --head beta \
-            --state open \
-            --json number \
-            --jq '.[0].number')
+          # Poll with jitter + exponential backoff (defends against abuse detection)
+          PR="none"
+          for attempt in {1..5}; do
+            PR=$(gh pr list \
+              --base master \
+              --head beta \
+              --state open \
+              --json number \
+              --jq '.[0].number // "none"') && break
+            
+            if [ $attempt -lt 5 ]; then
+              # Exponential backoff: 2^attempt seconds + jitter (0-1s)
+              backoff=$((2 ** (attempt - 1)))
+              jitter=$((RANDOM % 1000))
+              total_sleep=$(echo "scale=3; $backoff + $jitter / 1000" | bc)
+              sleep $total_sleep
+            fi
+          done
 
           echo "pr=$PR" >> $GITHUB_OUTPUT
 
       - name: Generate commit summary
         id: summary
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
           PR=${{ steps.check.outputs.pr }}
 
@@ -72,11 +96,25 @@ jobs:
           printf "%s\n" "$COMMITS" > commits.txt
 
       - name: Create PR if not exists
-        if: steps.check.outputs.pr == '' && steps.summary.outputs.empty != 'true'
+        if: steps.check.outputs.pr == 'none' && steps.summary.outputs.empty != 'true'
         id: create
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
+          # Double-check: guard against race condition where 2 workflows try to create PR
+          EXISTING_PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // "none"')
+          
+          if [ "$EXISTING_PR" != "none" ] && [ -n "$EXISTING_PR" ]; then
+            echo "PR #$EXISTING_PR already exists (created by concurrent workflow)"
+            echo "pr=$EXISTING_PR" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           echo "## 🚀 Automated Release PR" > body.txt
           echo "" >> body.txt
           echo "This PR contains all changes from beta to master." >> body.txt
@@ -101,7 +139,7 @@ jobs:
             --title "🚀 Release: beta → master" \
             --body-file body.txt
 
-          # Get the newly created PR number
+          # Query the newly created PR from authoritative source
           NEW_PR=$(gh pr list \
             --base master \
             --head beta \
@@ -111,15 +149,18 @@ jobs:
 
           echo "pr=$NEW_PR" >> $GITHUB_OUTPUT
 
-      - name: Update PR summary
-        if: steps.check.outputs.pr != '' && steps.summary.outputs.empty != 'true'
+      - name: Update PR summary (poll until queryable)
+        if: steps.check.outputs.pr != 'none' && steps.summary.outputs.empty != 'true'
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
           PR=${{ steps.check.outputs.pr }}
 
-          # Get existing body
-          gh pr view "$PR" --json body -q .body > old_body.txt
+          # Poll until PR is queryable (deterministic > fixed sleep)
+          for i in {1..5}; do
+            gh pr view "$PR" --json body -q .body > old_body.txt 2>/dev/null && break
+            [ $i -lt 5 ] && sleep 1
+          done
 
           # Extract content BEFORE block
           awk '/<!-- AUTO-GENERATED:START -->/{exit} {print}' old_body.txt > before.txt
@@ -144,42 +185,211 @@ jobs:
           # Update PR
           gh pr edit "$PR" --body-file final_body.txt
 
-      - name: Enable auto-merge
+      - name: Ensure PR is mergeable (rebase if needed + pre-sync)
         if: steps.summary.outputs.empty != 'true'
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          PR=${{ steps.check.outputs.pr }}
-          if [ -z "$PR" ]; then
-            PR=${{ steps.create.outputs.pr }}
+          # Query authoritative PR number
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // "none"')
+
+          if [ "$PR" = "none" ] || [ -z "$PR" ]; then
+            echo "No open PR found, skipping mergeable check"
+            exit 0
           fi
 
-          if [ -z "$PR" ]; then
+          echo "Checking if PR #$PR is mergeable..."
+          MERGEABLE=$(gh pr view "$PR" --json mergeable -q '.mergeable')
+
+          if [ "$MERGEABLE" = "CONFLICTING" ]; then
+            echo "⚠️  PR is conflicting — attempting rebase with retry logic..."
+            
+            # Pre-rebase safety: ensure beta is fully synced with remote  
+            git fetch origin || true
+            git pull --rebase origin beta || true
+            
+            REBASE_SUCCESS=false
+            for attempt in 1 2 3; do
+              echo "  Attempt $attempt/3..."
+              git fetch origin
+              git checkout beta || { git rebase --abort || true; continue; }
+              
+              if git rebase origin/master; then
+                echo "✓ Rebase successful on attempt $attempt"
+                
+                # Push with --force-with-lease (safe, fails if remote changed)
+                if git push origin beta --force-with-lease; then
+                  echo "✓ Force-pushed rebased branch"
+                  
+                  # Poll mergeable status (jitter + exp backoff defense against abuse detection)
+                  echo "  Polling GitHub to process force-push..."
+                  PUSH_PROCESSED=false
+                  for poll in {1..10}; do
+                    # Exponential backoff with jitter
+                    backoff=$((2 ** (poll - 1)))
+                    if [ $backoff -gt 8 ]; then backoff=8; fi  # Cap at 8s
+                    jitter=$((RANDOM % 1000))
+                    total_sleep=$(echo "scale=3; $backoff + $jitter / 1000" | bc)
+                    sleep $total_sleep
+                    
+                    # Check BOTH mergeable status AND required checks reappeared
+                    PR_STATE=$(gh pr view "$PR" --json mergeable,statusCheckRollup)
+                    MERGEABLE=$(echo "$PR_STATE" | jq -r '.mergeable')
+                    REQUIRED_CHECKS=$(echo "$PR_STATE" | jq -r '.statusCheckRollup[]? | select(.isRequired==true)' 2>/dev/null | wc -l)
+                    
+                    if [ "$MERGEABLE" != "CONFLICTING" ]; then
+                      # Verify at least one required check is present (indicates GitHub processed push)
+                      if [ "$REQUIRED_CHECKS" -gt 0 ]; then
+                        echo "✓ GitHub processed push (mergeable=$MERGEABLE, required_checks=$REQUIRED_CHECKS)"
+                        PUSH_PROCESSED=true
+                        break
+                      else
+                        echo "  Waiting for required checks to register (found $REQUIRED_CHECKS)..."
+                      fi
+                    fi
+                  done
+                  
+                  [ "$PUSH_PROCESSED" = "true" ] && REBASE_SUCCESS=true
+                  [ "$REBASE_SUCCESS" = "true" ] && break
+                else
+                  echo "❌ Force-push failed on attempt $attempt (remote may have changed)"
+                  git rebase --abort || true
+                fi
+              else
+                echo "❌ Rebase failed on attempt $attempt — aborting and retrying..."
+                git rebase --abort || true
+              fi
+              
+              if [ $attempt -lt 3 ]; then
+                echo "  Waiting 3s before retry..."
+                sleep 3
+              fi
+            done
+            
+            if [ "$REBASE_SUCCESS" != "true" ]; then
+              echo "❌ Rebase failed after 3 attempts — manual intervention required"
+              exit 1
+            fi
+          elif [ "$MERGEABLE" = "UNKNOWN" ]; then
+            echo "⏳ Mergeable status unknown — GitHub is checking..."
+          elif [ "$MERGEABLE" = "MERGEABLE" ]; then
+            echo "✓ PR is mergeable"
+          else
+            echo "❓ Unexpected mergeable status: $MERGEABLE"
+          fi
+
+      - name: Enable auto-merge (poll + verify idempotency)
+        if: steps.summary.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
+        run: |
+          # Query authoritative PR number
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // "none"')
+
+          if [ "$PR" = "none" ] || [ -z "$PR" ]; then
             echo "No PR found, skipping auto-merge"
             exit 0
           fi
 
           echo "Enabling auto-merge for PR #$PR"
 
-          # Enable auto-merge (GitHub will merge when checks pass)
-          gh pr merge "$PR" \
-            --auto \
-            --squash \
-            --delete-branch=false
+          # Check if auto-merge is already enabled (idempotency guard)
+          ALREADY_ENABLED=$(gh pr view "$PR" --json autoMergeRequest -q '.autoMergeRequest.enabledAt // empty')
+          if [ -n "$ALREADY_ENABLED" ]; then
+            echo "✓ Auto-merge already enabled at $ALREADY_ENABLED"
+            exit 0
+          fi
 
-          echo "✓ Auto-merge enabled - GitHub will merge when all checks pass"
+          # After rebase + force-push, GitHub may reset auto-merge due to new commit
+          # Retry up to 3x with polling to ensure it sticks (deterministic verification)
+          for attempt in 1 2 3; do
+            echo "  Attempt $attempt/3..."
+            
+            if gh pr merge "$PR" \
+              --auto \
+              --squash \
+              --delete-branch=false \
+              2>/dev/null; then
+              echo "✓ Auto-merge enable command succeeded"
+              
+              # Poll to verify it actually took effect (jitter + exp backoff)
+              VERIFIED=false
+              for poll in {1..5}; do
+                # Exponential backoff with jitter
+                backoff=$((2 ** (poll - 1)))
+                jitter=$((RANDOM % 1000))
+                total_sleep=$(echo "scale=3; $backoff + $jitter / 1000" | bc)
+                sleep $total_sleep
+                
+                ENABLED=$(gh pr view "$PR" --json autoMergeRequest -q '.autoMergeRequest.enabledAt // empty')
+                if [ -n "$ENABLED" ]; then
+                  echo "✓ Auto-merge verified as active"
+                  VERIFIED=true
+                  break
+                fi
+              done
+              [ "$VERIFIED" = "true" ] && break
+            fi
+            
+            if [ $attempt -lt 3 ]; then
+              echo "  Auto-merge not yet active, retrying in 2s..."
+              sleep 2
+            fi
+          done
+          
+          # Final verification
+          FINAL=$(gh pr view "$PR" --json autoMergeRequest -q '.autoMergeRequest.enabledAt // empty')
+          if [ -n "$FINAL" ]; then
+            echo "✓ Auto-merge definitively set"
+          else
+            echo "⚠ Auto-merge status uncertain (may be set)"
+          fi
 
       - name: Debug PR state
         if: steps.summary.outputs.empty != 'true'
         env:
-          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          PR=${{ steps.check.outputs.pr }}
-          if [ -z "$PR" ]; then
-            PR=${{ steps.create.outputs.pr }}
-          fi
+          # Query authoritative PR number
+          PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // "none"')
 
-          if [ -n "$PR" ]; then
-            echo "=== PR State Debug ==="
-            gh pr view "$PR" --json state,mergeable,autoMergeRequest,isDraft
+          if [ "$PR" != "none" ] && [ -n "$PR" ]; then
+            echo "=== Final PR State Consistency Check ==="
+            FULL_STATE=$(gh pr view "$PR" --json state,mergeable,autoMergeRequest,isDraft,statusCheckRollup)
+            echo "$FULL_STATE" | jq .
+            
+            # Validate consistency
+            STATE=$(echo "$FULL_STATE" | jq -r '.state')
+            MERGEABLE=$(echo "$FULL_STATE" | jq -r '.mergeable')
+            AUTO_MERGE=$(echo "$FULL_STATE" | jq -r '.autoMergeRequest.enabledAt // empty')
+            
+            CHECKS_STATUS=$(echo "$FULL_STATE" | jq -r '.statusCheckRollup[0].status // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+            
+            echo ""
+            echo "Consistency snapshot:"
+            echo "  - PR state: $STATE"
+            echo "  - Mergeable: $MERGEABLE"
+            echo "  - Auto-merge enabled: $([ -n "$AUTO_MERGE" ] && echo "YES" || echo "NO")"
+            echo "  - Checks status: $CHECKS_STATUS"
+            
+            # Warn if inconsistent
+            if [ "$STATE" = "OPEN" ] && [ "$MERGEABLE" = "MERGEABLE" ] && [ -z "$AUTO_MERGE" ]; then
+              echo "⚠️  WARNING: PR is mergeable but auto-merge is not enabled"
+              echo "    (watchdog will catch this in 5 minutes or on next push)"
+            fi
           fi

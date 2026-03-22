@@ -3,7 +3,8 @@
 # Production Deployment Pipeline
 #
 # Design principles:
-#   1. NO paths: trigger filter — every push to master runs the full pipeline
+#   1. Trigger filter: skips on CI-only changes (.github/workflows, README, etc)
+#      In normal flow (code via beta→master PR), this doesn't matter
 #   2. Runs ALL validation from scratch — no trust built on PR results alone
 #   3. Trivy scan runs BEFORE Docker push — vulnerable images never reach the registry
 #   4. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
@@ -24,6 +25,15 @@ on:
   push:
     branches:
       - master
+    # Skip deploy if ONLY CI-related files changed (optional guard).
+    # In normal flow, this shouldn't matter (code changes require beta→master merge).
+    # But protects against edge case of empty commits or workflow-only pushes.
+    paths:
+      - 'apps/api/**'
+      - 'apps/web/**'
+      - 'infra/**'      # Nginx config changes trigger redeploy
+      - 'packages/**'
+      - 'supabase/**'
   workflow_dispatch:
 
 # Never cancel an in-progress deployment — let it finish or fail cleanly.
@@ -47,6 +57,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Confirm deployment trigger
+        run: |
+          echo "========================================="
+          echo "Deployment triggered on master"
+          echo "  Commit SHA  : ${{ github.sha }}"
+          echo "  Event       : ${{ github.event_name }}"
+          echo "  Ref         : ${{ github.ref }}"
+          echo "========================================="
+
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -508,6 +527,24 @@ jobs:
             ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
+      - name: Log deployment state (slot + SHA for debugging)
+        uses: appleboy/ssh-action@v1.0.3
+        if: always()
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            ACTIVE_SLOT=$(cat /var/run/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            DEPLOY_STATUS="UNKNOWN"
+            
+            # Check if health endpoint is responding (good sign of successful deploy)
+            if timeout 5 curl -sf http://127.0.0.1:3000/health >/dev/null 2>&1; then
+              DEPLOY_STATUS="SUCCESS"
+            fi
+            
+            echo "DEPLOY_STATE=$DEPLOY_STATUS| SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"
+
   # ---------------------------------------------------------------------------
   # JOB: sync-infra
   #
@@ -695,6 +732,14 @@ jobs:
         needs.health-and-smoke.result == 'failure'
       )
     steps:
+      - name: Log rollback trigger
+        run: |
+          echo "ROLLBACK_TRIGGERED=TRUE | FAILED_JOBS:"
+          [ "${{ needs.deploy.result }}" = "failure" ] && echo "  - deploy"
+          [ "${{ needs.sync-infra.result }}" = "failure" ] && echo "  - sync-infra"
+          [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  - health-and-smoke"
+          echo "SHA=${{ github.sha }}"
+
       - name: Rollback on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -707,4 +752,7 @@ jobs:
             cd "$DEPLOY_ROOT"
             chmod +x apps/api/scripts/*.sh
             ./apps/api/scripts/rollback.sh --auto
-            echo "✓ Rollback completed."
+            
+            # Log final state
+            ACTIVE_SLOT=$(cat /var/run/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            echo "ROLLBACK_COMPLETE | ACTIVE_SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"

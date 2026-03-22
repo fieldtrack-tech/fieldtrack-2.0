@@ -1,16 +1,13 @@
 name: PR Validation
 
 on:
-  push:
-    branches:
-      - beta
   pull_request:
     branches:
       - master
       - main
 
 concurrency:
-  group: pr-${{ github.ref }}
+  group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -21,6 +18,7 @@ jobs:
   detect-changes:
     name: Detect Changed Paths
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -46,12 +44,20 @@ jobs:
     name: Backend CI
     runs-on: ubuntu-latest
     needs: detect-changes
+    timeout-minutes: 15
     if: always()
     steps:
+      - name: Abort if change detection failed
+        if: needs.detect-changes.result != 'success'
+        run: |
+          echo "❌ Change detection did not succeed (result: ${{ needs.detect-changes.result }}) — cannot safely skip checks"
+          exit 1
+
       - name: Skip if no backend changes
         if: needs.detect-changes.outputs.backend != 'true'
         run: |
-          echo "No backend changes → skipping"
+          echo "No backend changes — skipping all backend validation"
+          echo "✓ Backend CI (skipped)"
           exit 0
 
       - uses: actions/checkout@v5
@@ -82,6 +88,7 @@ jobs:
     name: Frontend CI
     runs-on: ubuntu-latest
     needs: detect-changes
+    timeout-minutes: 15
     if: always()
     env:
       NEXT_PUBLIC_API_BASE_URL: /api/proxy
@@ -89,10 +96,17 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
       NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
     steps:
+      - name: Abort if change detection failed
+        if: needs.detect-changes.result != 'success'
+        run: |
+          echo "❌ Change detection did not succeed (result: ${{ needs.detect-changes.result }}) — cannot safely skip checks"
+          exit 1
+
       - name: Skip if no frontend changes
         if: needs.detect-changes.outputs.frontend != 'true'
         run: |
-          echo "No frontend changes → skipping"
+          echo "No frontend changes — skipping all frontend validation"
+          echo "✓ Frontend CI (skipped)"
           exit 0
 
       - uses: actions/checkout@v5
@@ -119,12 +133,20 @@ jobs:
     name: Infra CI
     runs-on: ubuntu-latest
     needs: detect-changes
+    timeout-minutes: 10
     if: always()
     steps:
+      - name: Abort if change detection failed
+        if: needs.detect-changes.result != 'success'
+        run: |
+          echo "❌ Change detection did not succeed (result: ${{ needs.detect-changes.result }}) — cannot safely skip checks"
+          exit 1
+
       - name: Skip if no infra changes
         if: needs.detect-changes.outputs.infra != 'true'
         run: |
-          echo "No infra changes → skipping"
+          echo "No infra changes — skipping all infra validation"
+          echo "✓ Infra CI (skipped)"
           exit 0
 
       - uses: actions/checkout@v5
@@ -158,12 +180,25 @@ jobs:
   production-parity:
     name: Production Parity (Full Deploy Simulation)
     runs-on: ubuntu-latest
-    needs: [backend-ci, infra-ci]
+    needs: [detect-changes, backend-ci, infra-ci]
+    timeout-minutes: 15
     if: always()
     steps:
+      - name: Abort if upstream CI failed
+        if: needs.backend-ci.result == 'failure' || needs.infra-ci.result == 'failure'
+        run: |
+          echo "❌ Upstream CI failed — refusing to run production parity"
+          exit 1
+
+      - name: Skip if no backend/infra changes
+        if: needs.detect-changes.outputs.backend != 'true' && needs.detect-changes.outputs.infra != 'true'
+        run: echo "No backend/infra changes → skipping production parity"
+
       - uses: actions/checkout@v5
+        if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.infra == 'true'
 
       - name: Build production image
+        if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.infra == 'true'
         run: |
           docker build \
             -t fieldtrack-backend:pr \
@@ -171,9 +206,11 @@ jobs:
             .
 
       - name: Validate CI env file exists
+        if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.infra == 'true'
         run: test -f apps/api/.env.ci || (echo "❌ Missing apps/api/.env.ci" && exit 1)
 
       - name: Start container (CI mode)
+        if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.infra == 'true'
         run: |
           docker run -d \
             --name backend-blue \
@@ -184,6 +221,7 @@ jobs:
             fieldtrack-backend:pr
 
       - name: Verify container health
+        if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.infra == 'true'
         run: |
           echo "=== Verifying container health ==="
 
