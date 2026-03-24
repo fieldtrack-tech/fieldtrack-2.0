@@ -37,6 +37,14 @@ export const locationsService = {
       );
     }
 
+    // Reject points recorded before the session started (replay / clock-skew guard).
+    const checkinAt = await attendanceRepository.getSessionCheckinAt(request, body.session_id);
+    if (checkinAt && new Date(body.recorded_at) < new Date(checkinAt)) {
+      throw new BadRequestError(
+        "Cannot record location: recorded_at is before the session start time.",
+      );
+    }
+
     const record = await locationsRepository.createLocation(
       request,
       employeeId,
@@ -82,6 +90,18 @@ export const locationsService = {
       throw new BadRequestError(
         "Cannot record locations: invalid or closed attendance session.",
       );
+    }
+
+    // Reject any point recorded before the session started.
+    const checkinAt = await attendanceRepository.getSessionCheckinAt(request, body.session_id);
+    if (checkinAt) {
+      const sessionStart = new Date(checkinAt);
+      const offender = body.points.find((p) => new Date(p.recorded_at) < sessionStart);
+      if (offender) {
+        throw new BadRequestError(
+          "Cannot record locations: one or more points have recorded_at before the session start time.",
+        );
+      }
     }
 
     const insertedCount = await locationsRepository.createLocationBatch(

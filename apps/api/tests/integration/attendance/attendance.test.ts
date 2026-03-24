@@ -35,6 +35,7 @@ vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
     findSessionsByOrg: vi.fn(),
     findLatestSessionPerEmployee: vi.fn(),
     validateSessionActive: vi.fn(),
+    getSessionCheckinAt: vi.fn(),
     upsertLatestSession: vi.fn().mockResolvedValue(undefined),
     updateLatestSessionDistance: vi.fn().mockResolvedValue(undefined),
   },
@@ -152,6 +153,17 @@ describe("Attendance Integration Tests", () => {
       expect(body.error).toContain("active session");
     });
 
+    it("returns 403 when called by an ADMIN (M6 fix)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/attendance/check-in",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body) as { success: false; error: string };
+      expect(body.error).toMatch(/admin users cannot check in/i);
+    });
+
     it("returns 404 when employee is not in the organization", async () => {
       // Simulate auth middleware finding no employee row: token without employee_id → undefined.
       // Currently the integration test JWT always includes employee_id via signEmployeeToken.
@@ -220,6 +232,17 @@ describe("Attendance Integration Tests", () => {
       const body = JSON.parse(res.body) as { error: string };
       expect(body.error.toLowerCase()).toContain("check in");
     });
+
+    it("returns 403 when called by an ADMIN (M6 fix)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/attendance/check-out",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body) as { success: false; error: string };
+      expect(body.error).toMatch(/admin users cannot check out/i);
+    });
   });
 
   // ─── GET /attendance/my-sessions ────────────────────────────────────────────
@@ -276,7 +299,7 @@ describe("Attendance Integration Tests", () => {
     });
   });
 
-  // ─── GET /attendance/org-sessions (ADMIN only) ───────────────────────────────
+  // ─── GET /attendance/org-sessions (REMOVED — MIN2) ──────────────────────────
 
   describe("GET /attendance/org-sessions", () => {
     it("returns 403 when called by a non-ADMIN employee", async () => {
@@ -288,72 +311,17 @@ describe("Attendance Integration Tests", () => {
       expect(res.statusCode).toBe(403);
     });
 
-    it("returns 200 for an ADMIN", async () => {
-      vi.mocked(attendanceRepository.findLatestSessionPerEmployee).mockResolvedValue({ data: [], total: 0 } as never);
-
+    it("returns 410 Gone for an ADMIN (route removed, use /admin/sessions)", async () => {
       const res = await app.inject({
         method: "GET",
         url: "/attendance/org-sessions",
         headers: { authorization: `Bearer ${adminToken}` },
       });
 
-      expect(res.statusCode).toBe(200);
-    });
-
-    it("accepts a valid status filter param", async () => {
-      vi.mocked(attendanceRepository.findLatestSessionPerEmployee).mockResolvedValue({ data: [], total: 0 } as never);
-
-      const res = await app.inject({
-        method: "GET",
-        url: "/attendance/org-sessions?status=active",
-        headers: { authorization: `Bearer ${adminToken}` },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(attendanceRepository.findLatestSessionPerEmployee).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(Number),
-        expect.any(Number),
-        "active",
-      );
-    });
-
-    it("returns 400 for an invalid status value", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/attendance/org-sessions?status=unknown",
-        headers: { authorization: `Bearer ${adminToken}` },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it("routes to findSessionsByUser when employee_id is provided", async () => {
-      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({ data: [], total: 0 } as never);
-
-      const res = await app.inject({
-        method: "GET",
-        url: `/attendance/org-sessions?employee_id=${TEST_EMPLOYEE_ID}`,
-        headers: { authorization: `Bearer ${adminToken}` },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(attendanceRepository.findSessionsByUser).toHaveBeenCalledWith(
-        expect.anything(),
-        TEST_EMPLOYEE_ID,
-        expect.any(Number),
-        expect.any(Number),
-      );
-      expect(attendanceRepository.findLatestSessionPerEmployee).not.toHaveBeenCalled();
-    });
-
-    it("rejects an invalid limit above 100", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/attendance/org-sessions?limit=500",
-        headers: { authorization: `Bearer ${adminToken}` },
-      });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(410);
+      const body = JSON.parse(res.body) as { success: false; error: string };
+      expect(body.success).toBe(false);
+      expect(body.error).toMatch(/\/admin\/sessions/);
     });
   });
 

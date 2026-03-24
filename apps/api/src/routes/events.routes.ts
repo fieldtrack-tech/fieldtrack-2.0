@@ -4,6 +4,14 @@ import { requireRole } from "../middleware/role-guard.js";
 import { sseEventBus } from "../utils/sse-emitter.js";
 
 /**
+ * Per-org SSE connection counter.
+ * Prevents file-descriptor exhaustion when a client opens many connections.
+ * Keyed by orgId; decremented on disconnect.
+ */
+const orgConnectionCount = new Map<string, number>();
+const MAX_SSE_CONNECTIONS_PER_ORG = 20;
+
+/**
  * GET /admin/events
  *
  * Server-Sent Events stream scoped to the authenticated admin's organization.
@@ -19,6 +27,7 @@ import { sseEventBus } from "../utils/sse-emitter.js";
  *
  * Auth: ADMIN only.
  * Nginx: requires `proxy_buffering off` — already configured in fieldtrack.conf.
+ * Limit: max 20 concurrent connections per org (M4 — FD exhaustion protection).
  */
 export async function eventsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -33,6 +42,21 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const orgId = request.organizationId;
+
+      // M4: enforce per-org connection limit to prevent FD exhaustion.
+      const currentCount = orgConnectionCount.get(orgId) ?? 0;
+      if (currentCount >= MAX_SSE_CONNECTIONS_PER_ORG) {
+        request.log.warn(
+          { orgId, currentCount, limit: MAX_SSE_CONNECTIONS_PER_ORG },
+          "SSE connection limit reached for org — rejecting new connection",
+        );
+        reply.status(429).send({
+          success: false,
+          error: `SSE connection limit reached (max ${MAX_SSE_CONNECTIONS_PER_ORG} per organization).`,
+        });
+        return;
+      }
+      orgConnectionCount.set(orgId, currentCount + 1);
 
       // SSE headers
       void reply.raw.writeHead(200, {
@@ -75,6 +99,13 @@ export async function eventsRoutes(app: FastifyInstance): Promise<void> {
       request.raw.on("close", () => {
         clearInterval(heartbeat);
         sseEventBus.off(channelKey, onOrgEvent);
+        // M4: decrement the per-org connection counter.
+        const count = orgConnectionCount.get(orgId) ?? 1;
+        if (count <= 1) {
+          orgConnectionCount.delete(orgId);
+        } else {
+          orgConnectionCount.set(orgId, count - 1);
+        }
       });
 
       // Keep the Fastify handler alive — SSE is a long-lived connection

@@ -1,6 +1,7 @@
+import { randomUUID } from "crypto";
 import type { FastifyRequest } from "fastify";
 import { expensesRepository } from "./expenses.repository.js";
-import { BadRequestError, ExpenseAlreadyReviewed, NotFoundError, requireEmployeeContext } from "../../utils/errors.js";
+import { BadRequestError, ExpenseAlreadyReviewed, ForbiddenError, NotFoundError, requireEmployeeContext } from "../../utils/errors.js";
 import type {
   Expense,
   CreateExpenseBody,
@@ -12,6 +13,7 @@ import { analyticsMetricsRepository } from "../analytics/analytics.metrics.repos
 import { invalidateOrgAnalytics } from "../../utils/cache.js";
 import { sseEventBus } from "../../utils/sse-emitter.js";
 import { emitEvent } from "../../utils/event-bus.js";
+import { supabaseServiceClient } from "../../config/supabase.js";
 
 /**
  * Expenses service — business rules for expense management.
@@ -38,6 +40,10 @@ export const expensesService = {
     request: FastifyRequest,
     body: CreateExpenseBody,
   ): Promise<Expense> {
+    // M6: ADMIN users manage the org — they must not submit expenses as employees.
+    if (request.user.role === "ADMIN") {
+      throw new ForbiddenError("Admin users cannot create expenses.");
+    }
     requireEmployeeContext(request);
     const employeeId = request.employeeId;
 
@@ -138,7 +144,9 @@ export const expensesService = {
     expenseId: string,
     body: UpdateExpenseStatusBody,
   ): Promise<Expense> {
-    // 1. Fetch the expense — enforces tenant isolation via enforceTenant().
+    // 1. Fetch the expense — orgTable() scopes the query to the request org at DB level.
+    //    Defence-in-depth: also verify the returned row belongs to this org in case the
+    //    repository is mocked or the row slips through a future refactor.
     const expense = await expensesRepository.findExpenseById(
       request,
       expenseId,
@@ -146,6 +154,10 @@ export const expensesService = {
 
     if (!expense) {
       throw new NotFoundError("Expense not found");
+    }
+
+    if (expense.organization_id !== request.organizationId) {
+      throw new ForbiddenError("Access denied");
     }
 
     // 2. Only PENDING expenses may be transitioned.
@@ -220,5 +232,84 @@ export const expensesService = {
     }
 
     return updated;
+  },
+
+  /**
+   * Generate a short-lived signed upload URL for a receipt file.
+   *
+   * The caller uploads the file directly to Supabase Storage — the API
+   * never handles the file bytes, keeping it stateless and avoiding
+   * memory pressure on the server.
+   *
+   * Storage path: receipts/{organization_id}/{employee_id}/{uuid}.{ext}
+   * The org-prefix is enforced by the storage RLS INSERT policy so even if
+   * a client crafts a different path the upload will be rejected.
+   *
+   * Returns:
+   *  uploadUrl  — the signed PUT URL (valid for 5 minutes)
+   *  receiptUrl — the permanent path the client should store in receipt_url
+   *               after a successful upload
+   */
+  async generateReceiptUploadUrl(
+    request: FastifyRequest,
+    extension: string,
+    mimeType?: string,
+  ): Promise<{ uploadUrl: string; receiptUrl: string }> {
+    requireEmployeeContext(request);
+    const employeeId = request.employeeId!;
+
+    const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "pdf"] as const;
+    const ext = extension.toLowerCase().replace(/^\./, "");
+    if (!(ALLOWED_EXTENSIONS as readonly string[]).includes(ext)) {
+      throw new BadRequestError(
+        `Unsupported file type. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`,
+      );
+    }
+
+    // If the caller declares a MIME type, validate it against the extension.
+    // This prevents content-type spoofing before a signed URL is issued.
+    // The storage bucket also enforces allowed_mime_types server-side, but
+    // early rejection here gives the client a clearer error message.
+    const EXTENSION_TO_MIME: Record<string, string> = {
+      jpg:  "image/jpeg",
+      jpeg: "image/jpeg",
+      png:  "image/png",
+      webp: "image/webp",
+      pdf:  "application/pdf",
+    };
+    const ALLOWED_MIME_TYPES = Object.values(EXTENSION_TO_MIME);
+    if (mimeType !== undefined) {
+      if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+        throw new BadRequestError(
+          `Unsupported MIME type '${mimeType}'. Allowed: ${[...new Set(ALLOWED_MIME_TYPES)].join(", ")}`,
+        );
+      }
+      const expectedMime = EXTENSION_TO_MIME[ext];
+      if (mimeType !== expectedMime) {
+        throw new BadRequestError(
+          `MIME type '${mimeType}' does not match extension '${ext}' (expected '${expectedMime}')`,
+        );
+      }
+    }
+
+    const filename = `${randomUUID()}.${ext}`;
+    const storagePath = `${request.organizationId}/${employeeId}/${filename}`;
+
+    const { data, error } = await supabaseServiceClient.storage
+      .from("receipts")
+      .createSignedUploadUrl(storagePath, { upsert: false });
+
+    if (error || !data) {
+      request.log.error(
+        { error, organizationId: request.organizationId, employeeId },
+        "Failed to generate receipt upload URL",
+      );
+      throw new BadRequestError("Could not generate upload URL. Please try again.");
+    }
+
+    return {
+      uploadUrl: data.signedUrl,
+      receiptUrl: data.path,
+    };
   },
 };

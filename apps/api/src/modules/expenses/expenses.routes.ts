@@ -15,14 +15,49 @@ import {
  * Expense routes.
  *
  * EMPLOYEE endpoints:
- *   POST  /expenses          — create a new expense (rate-limited per user)
- *   GET   /expenses/my       — list own expenses (paginated)
+ *   POST  /expenses                   — create a new expense (rate-limited per user)
+ *   GET   /expenses/my                — list own expenses (paginated)
+ *   POST  /expenses/receipt-upload-url — get a signed upload URL for a receipt file
  *
  * ADMIN endpoints:
- *   GET   /admin/expenses    — list all org expenses (paginated)
- *   PATCH /admin/expenses/:id — approve or reject a PENDING expense
+ *   GET   /admin/expenses             — list all org expenses (paginated)
+ *   PATCH /admin/expenses/:id         — approve or reject a PENDING expense
  */
 export async function expensesRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * POST /expenses/receipt-upload-url
+   *
+   * Returns a short-lived Supabase Storage signed upload URL so the client can
+   * upload a receipt file directly without routing bytes through the API server.
+   *
+   * Body:  { extension: "jpg" | "jpeg" | "png" | "webp" | "pdf" }
+   * Response: { uploadUrl: string, receiptUrl: string }
+   *   - uploadUrl:  PUT this URL with the raw file bytes + correct Content-Type
+   *   - receiptUrl: the storage path to save as receipt_url on the expense record
+   *
+   * Must be declared BEFORE /expenses/my to avoid Fastify treating "receipt-upload-url"
+   * as a dynamic :id segment.
+   */
+  app.post(
+    "/expenses/receipt-upload-url",
+    {
+      schema: {
+        tags: ["expenses"],
+        body: z.object({
+          extension: z.enum(["jpg", "jpeg", "png", "webp", "pdf"], {
+            error: "extension must be one of: jpg, jpeg, png, webp, pdf",
+          }),
+          // Optional: when provided, the server validates extension ↔ MIME alignment
+          // before issuing a signed URL, giving the client an early rejection rather
+          // than letting the upload fail at the storage layer.
+          mimeType: z.string().optional(),
+        }),
+      },
+      preValidation: [authenticate],
+    },
+    expensesController.getReceiptUploadUrl,
+  );
+
   app.post(
     "/expenses",
     {

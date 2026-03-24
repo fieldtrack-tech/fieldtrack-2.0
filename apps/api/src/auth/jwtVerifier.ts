@@ -24,8 +24,9 @@ const client = jwksClient({
  * Fetches the signing key for a given JWT.
  * Called automatically by jsonwebtoken during verification.
  */
-function getKey(header: any, callback: any): void {
-  client.getSigningKey(header.kid, (err, key) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getKey = (header: any, callback: any): void => {
+  client.getSigningKey((header as Record<string, string>).kid, (err, key) => {
     if (err) {
       callback(err);
       return;
@@ -33,22 +34,32 @@ function getKey(header: any, callback: any): void {
     const signingKey = key?.getPublicKey();
     callback(null, signingKey);
   });
-}
+};
 
 /**
  * Supabase JWT payload structure.
- * The actual application role is stored in user_metadata.
+ *
+ * IMPORTANT — claim ownership:
+ *   app_metadata  — written by the Supabase service role / custom_access_token_hook only.
+ *                   Users cannot modify it. Use this for authorization-sensitive values.
+ *   user_metadata — user-controlled via supabase.auth.updateUser(). Never use for authz.
+ *
+ * The application role (ADMIN / EMPLOYEE) is embedded in app_metadata by the
+ * custom_access_token_hook which reads the authoritative value from public.users.role.
  */
 export interface SupabaseJwtPayload extends JoseJwtPayload {
   sub: string;
   email?: string;
-  aud?: string; // Token audience - must be "authenticated" for user tokens
-  role?: string; // This is always "authenticated" - ignore it
-  user_metadata?: {
-    role?: string; // This is the real application role: ADMIN or EMPLOYEE
-  };
+  aud?: string; // Token audience — must be "authenticated" for user tokens
+  role?: string; // Supabase built-in claim — always "authenticated", NOT the app role
   app_metadata?: {
     provider?: string;
+    organization_id?: string; // embedded by custom_access_token_hook
+    employee_id?: string;     // embedded by custom_access_token_hook
+    role?: string;            // application role: ADMIN or EMPLOYEE (server-controlled)
+  };
+  user_metadata?: {
+    [key: string]: unknown;   // user-controlled — do NOT use for authorization decisions
   };
 }
 

@@ -106,12 +106,9 @@ describe("Expenses Integration Tests", () => {
       expect(res.statusCode).toBe(403);
     });
 
-    it("returns 201 when called by an ADMIN who has an employee record", async () => {
-      vi.mocked(expensesRepository.createExpense).mockResolvedValue(
-        pendingExpense as never,
-      );
-      // Sign a token with ADMIN role but also include employee_id to simulate an
-      // admin who also has an employees row in the DB.
+    it("returns 403 when called by an ADMIN who has an employee record (M6 fix)", async () => {
+      // M6 fix: admin role is now explicitly rejected before requireEmployeeContext,
+      // even if the admin token includes an employee_id claim.
       const adminWithEmployeeToken = app.jwt.sign({
         sub: TEST_ADMIN_ID,
         role: "ADMIN",
@@ -129,10 +126,10 @@ describe("Expenses Integration Tests", () => {
         body: JSON.stringify({ amount: 75.5, description: "Admin expense" }),
       });
 
-      expect(res.statusCode).toBe(201);
-      const body = JSON.parse(res.body) as { success: boolean; data: typeof pendingExpense };
-      expect(body.success).toBe(true);
-      expect(body.data.status).toBe("PENDING");
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body) as { success: false; error: string };
+      expect(body.success).toBe(false);
+      expect(body.error).toMatch(/admin users cannot create expenses/i);
     });
 
     it("returns 201 with created expense on valid submission", async () => {

@@ -31,6 +31,14 @@ export const createLocationSchema = z.object({
         const now = Date.now();
         return recordedTime <= now + TWO_MINUTES_MS;
     }, "recorded_at cannot be more than 2 minutes in the future"),
+    /**
+     * Optional client-side sequence counter for ordering GPS points within a session.
+     * Must be a non-negative integer. Monotonic increase per session is expected but
+     * not enforced here — the service layer validates against the session start time.
+     *
+     * TODO (post-mobile stabilisation): add DB NOT NULL + CHECK (sequence_number >= 0)
+     */
+    sequence_number: z.number().int().min(0, "sequence_number must be >= 0").optional(),
 });
 
 export type CreateLocationBody = z.infer<typeof createLocationSchema>;
@@ -38,7 +46,16 @@ export type CreateLocationBody = z.infer<typeof createLocationSchema>;
 export const createLocationBatchSchema = z.object({
     session_id: z.string().uuid("session_id must be a valid UUID"),
     points: z.array(createLocationSchema.omit({ session_id: true })).min(1).max(100),
-});
+}).refine((batch) => {
+    // Soft-validate monotonic sequence_number ordering within the batch.
+    // Only checked when all points supply sequence_number.
+    const withSeq = batch.points.filter((p) => p.sequence_number !== undefined);
+    if (withSeq.length !== batch.points.length) return true; // partial — skip
+    for (let i = 1; i < withSeq.length; i++) {
+        if (withSeq[i]!.sequence_number! < withSeq[i - 1]!.sequence_number!) return false;
+    }
+    return true;
+}, "points must be in non-descending sequence_number order");
 
 export type CreateLocationBatchBody = z.infer<typeof createLocationBatchSchema>;
 

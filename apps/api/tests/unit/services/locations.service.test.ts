@@ -18,6 +18,7 @@ vi.mock("../../../src/modules/locations/locations.repository.js", () => ({
 vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
   attendanceRepository: {
     validateSessionActive: vi.fn(),
+    getSessionCheckinAt: vi.fn(),
     findOpenSession: vi.fn(),
     createSession: vi.fn(),
     closeSession: vi.fn(),

@@ -6,6 +6,7 @@ import { getCached } from "../../utils/cache.js";
 import {
   EmployeeAlreadyCheckedIn,
   SessionAlreadyClosed,
+  ForbiddenError,
   requireEmployeeContext,
 } from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
@@ -24,6 +25,10 @@ import { persistRetryIntent } from "../../workers/retry-intents.js";
  */
 export const attendanceService = {
   async checkIn(request: FastifyRequest): Promise<AttendanceSession> {
+    // M6: ADMIN users manage the org — they must not participate in attendance.
+    if (request.user.role === "ADMIN") {
+      throw new ForbiddenError("Admin users cannot check in.");
+    }
     requireEmployeeContext(request);
     const { employeeId } = request;
 
@@ -66,6 +71,10 @@ export const attendanceService = {
   },
 
   async checkOut(request: FastifyRequest): Promise<AttendanceSession> {
+    // M6: ADMIN users manage the org — they must not participate in attendance.
+    if (request.user.role === "ADMIN") {
+      throw new ForbiddenError("Admin users cannot check out.");
+    }
     requireEmployeeContext(request);
     const { employeeId } = request;
 

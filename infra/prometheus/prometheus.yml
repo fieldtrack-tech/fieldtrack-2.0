@@ -19,6 +19,15 @@ global:
 rule_files:
   - alerts.yml
 
+# Route fired alerts to Alertmanager for delivery (email, etc.).
+# Alertmanager runs on the shared Docker network at alertmanager:9093.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+      timeout: 10s
+
 scrape_configs:
   # ── Fastify Backend (Blue) ──────────────────────────────────────────────────
   - job_name: "fieldtrack-backend-blue"

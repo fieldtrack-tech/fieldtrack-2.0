@@ -19,7 +19,7 @@ const EXPENSE_ENRICHED_COLS = `${EXPENSE_COLS}, employees!expenses_employee_id_f
 
 function flattenEmployee(row: Record<string, unknown>): EnrichedExpense {
   const emp = row.employees as { name?: string; employee_code?: string } | null;
-  const { employees: _emp, ...rest } = row;
+  const { employees: _, ...rest } = row;
   return {
     ...rest,
     employee_name: emp?.name ?? null,

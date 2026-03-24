@@ -34,6 +34,7 @@ export const locationsRepository = {
                     longitude: data.longitude,
                     accuracy: data.accuracy,
                     recorded_at: data.recorded_at,
+                    ...(data.sequence_number !== undefined && { sequence_number: data.sequence_number }),
                 },
                 { onConflict: "session_id, recorded_at", ignoreDuplicates: true },
             )
@@ -60,6 +61,7 @@ export const locationsRepository = {
             longitude: p.longitude,
             accuracy: p.accuracy,
             recorded_at: p.recorded_at,
+            ...(p.sequence_number !== undefined && { sequence_number: p.sequence_number }),
         }));
 
         const { data, error } = await supabase

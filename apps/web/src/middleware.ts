@@ -68,11 +68,11 @@ export async function middleware(request: NextRequest) {
   }
 
   // Role-based protection for /admin routes.
-  // The role is stored in user_metadata (set by the backend when creating users).
-  // This prevents non-admin users from ever rendering admin pages — not just from
-  // reaching the API. The API enforces role independently at every endpoint.
+  // The role is embedded in app_metadata by the custom_access_token_hook, which reads
+  // the authoritative value from public.users.role (server-controlled).
+  // user_metadata is user-editable and MUST NOT be used for authorization decisions.
   if (pathname.startsWith("/admin")) {
-    const role = session.user?.user_metadata?.role as string | undefined;
+    const role = (session.user?.app_metadata as Record<string, unknown> | undefined)?.role as string | undefined;
     if (role !== "ADMIN") {
       // Redirect employees and unknown roles away from admin pages.
       return NextResponse.redirect(new URL("/sessions", request.url));

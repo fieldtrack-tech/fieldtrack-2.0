@@ -20,6 +20,9 @@ export const createExpenseBodySchema = z.object({
   receipt_url: z
     .string()
     .url({ message: "receipt_url must be a valid URL" })
+    .refine((url) => url.startsWith("https://"), {
+      message: "receipt_url must use HTTPS",
+    })
     .optional(),
 });
 
@@ -39,9 +42,11 @@ export type UpdateExpenseStatusBody = z.infer<
   typeof updateExpenseStatusBodySchema
 >;
 
+// TODO (future phase): replace offset pagination with cursor-based pagination
+// to support large datasets without heavy DB scans.
 export const expensePaginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(1000).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export type ExpensePaginationQuery = z.infer<typeof expensePaginationSchema>;

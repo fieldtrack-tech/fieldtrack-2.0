@@ -108,6 +108,7 @@ desktop.ini
 *.sublime-project
 *.sublime-workspace
 .kiro/
+.local
 
 # ----------------
 # Temporary Files
@@ -148,3 +149,9 @@ storybook-static/
 
 # Sentry
 .sentryclirc
+
+#Skills
+.github/skills/
+
+#old migration files
+supabase/old-migration/

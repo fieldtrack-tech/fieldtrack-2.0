@@ -350,7 +350,7 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
 
       retryIntentsPendingGauge.set(pendingData?.length ?? 0);
       retryIntentsDeadGauge.set(deadData?.length ?? 0);
-    } catch (error) {
+    } catch {
       // Silently fail metric population — do not block scrape
       // Metrics will retain their last known values
     }

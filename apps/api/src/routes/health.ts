@@ -38,7 +38,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     // so the response goes through the same middleware chain as all other routes.
     app.get<{ Reply: RootResponse }>("/", {
         schema: { tags: ["health"] },
-    }, async (_request, _reply) => {
+    }, async () => {
         return {
             service: "FieldTrack 2.0",
             status: "online",
@@ -49,7 +49,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
 
     app.get<{ Reply: HealthResponse }>("/health", {
         schema: { tags: ["health"] },
-    }, async (_request, _reply) => {
+    }, async () => {
         return {
             status: "ok",
             timestamp: new Date().toISOString(),

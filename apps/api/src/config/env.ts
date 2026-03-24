@@ -67,7 +67,8 @@ const envSchema = z
      * CONFIG_VERSION will fail fast rather than misbehave silently.
      *
      * Value: must be the exact string "1" — any other value fails validation.
-     * Default: "1" (so existing deployments without the variable are unaffected).
+     * Default: "1" (non-production only — production requires an explicit value
+     * enforced in superRefine below, MIN7 fix).
      */
     CONFIG_VERSION: z.literal("1").default("1"),
 
@@ -367,7 +368,20 @@ const envSchema = z
       });
     }
 
-    // 2. Open CORS in production leaks credentials to any origin.
+    // 2. CONFIG_VERSION must be explicitly set in production (MIN7).
+    //    A default value of "1" masks missing configuration — fail fast instead.
+    if (isProd && !process.env["CONFIG_VERSION"]) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["CONFIG_VERSION"],
+        message:
+          "CONFIG_VERSION must be explicitly set in production. " +
+          "Do not rely on the default value. Set CONFIG_VERSION=1 in your " +
+          "secrets manager or deployment environment.",
+      });
+    }
+
+    // 4. Open CORS in production leaks credentials to any origin.
     if (isProd && !data.CORS_ORIGIN.trim()) {
       ctx.addIssue({
         code: "custom",
@@ -379,7 +393,7 @@ const envSchema = z
       });
     }
 
-    // 3. APP_BASE_URL is the canonical root for all absolute link generation.
+    // 5. APP_BASE_URL is the canonical root for all absolute link generation.
     if (isProd && !data.APP_BASE_URL) {
       ctx.addIssue({
         code: "custom",
@@ -391,7 +405,7 @@ const envSchema = z
       });
     }
 
-    // 4. API_BASE_URL is needed for accurate OpenAPI documentation and any
+    // 6. API_BASE_URL is needed for accurate OpenAPI documentation and any
     //    server-generated absolute links that reference the API itself.
     if (isProd && !data.API_BASE_URL) {
       ctx.addIssue({
@@ -404,7 +418,7 @@ const envSchema = z
       });
     }
 
-    // 5. FRONTEND_BASE_URL is required in production for email link generation.
+    // 7. FRONTEND_BASE_URL is required in production for email link generation.
     //    Reset-password and invitation emails become broken without it.
     if (isProd && !data.FRONTEND_BASE_URL) {
       ctx.addIssue({

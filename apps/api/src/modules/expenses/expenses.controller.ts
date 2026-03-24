@@ -103,4 +103,27 @@ export const expensesController = {
       handleError(error, request, reply, "Unexpected error updating expense status");
     }
   },
+
+  /**
+   * POST /expenses/receipt-upload-url
+   * Returns a short-lived signed upload URL for a receipt file.
+   * The client uploads directly to Supabase Storage — the API never handles
+   * file bytes. Receipt URL is derived from the storage path and should be
+   * included in the expense creation payload as receipt_url.
+   */
+  async getReceiptUploadUrl(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    try {
+      const body = request.body as Record<string, unknown> | undefined;
+      const extension = typeof body?.extension === "string" ? body.extension : "";
+      const mimeType = typeof body?.mimeType === "string" ? body.mimeType : undefined;
+
+      const result = await expensesService.generateReceiptUploadUrl(request, extension, mimeType);
+      reply.status(200).send(ok(result));
+    } catch (error) {
+      handleError(error, request, reply, "Unexpected error generating receipt upload URL");
+    }
+  },
 };

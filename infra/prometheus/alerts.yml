@@ -129,6 +129,15 @@ groups:
 - name: fieldtrack_infrastructure_alerts
   rules:
 
+  - alert: RedisDown
+    expr: up{job="redis"} == 0
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Redis is unreachable"
+      description: "Redis has been down for more than 2 minutes. BullMQ workers, rate limiting, and the auth context cache will all degrade until Redis recovers."
+
   - alert: DeploymentFailure
     expr: up{job=~"fieldtrack-backend.*"} == 0
     for: 2m

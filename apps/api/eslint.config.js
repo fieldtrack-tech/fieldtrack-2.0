@@ -6,6 +6,18 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ["src/**/*.ts", "src/**/*.js"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
+  {
     // Enforce use of orgTable() from db/query.ts in repository files.
     // orgTable() applies the tenant filter at construction time, making
     // it structurally impossible to omit — the filter is built in.

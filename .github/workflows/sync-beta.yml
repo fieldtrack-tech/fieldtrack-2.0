@@ -31,6 +31,12 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
+      - name: Show commits that will be lost on beta
+        run: |
+          echo "=== Commits on beta NOT on master (will be overwritten) ==="
+          git log origin/master..origin/beta --oneline || echo "(none — beta is already up to date with master)"
+          echo "============================================================"
+
       - name: Sync master → beta (force reset)
         run: |
           git fetch origin

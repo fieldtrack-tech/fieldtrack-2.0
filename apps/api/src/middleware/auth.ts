@@ -55,7 +55,7 @@ export async function authenticate(
         if (env.APP_ENV === "test") {
             // Test mode: use @fastify/jwt (synchronous verification)
             try {
-                const decoded = request.server.jwt.verify(token) as any;
+                const decoded = request.server.jwt.verify(token) as { sub: string; role?: string; email?: string; organization_id?: string; employee_id?: string };
                 userId = decoded.sub;
                 role = decoded.role; // Test tokens have role at top level
                 email = decoded.email;
@@ -68,7 +68,7 @@ export async function authenticate(
                 if (env.APP_ENV === "test") {
                     request.employeeId = decoded.employee_id ?? undefined;
                 }
-            } catch (error) {
+            } catch {
                 throw new UnauthorizedError("Invalid or expired token");
             }
         } else {
@@ -85,12 +85,14 @@ export async function authenticate(
                 throw new UnauthorizedError("Invalid user id in token");
             }
 
-            // Improvement 1: Fail fast if user_metadata.role is missing
-            // Never default roles - failing fast is safer than privilege mistakes
-            role = decoded.user_metadata?.role;
+            // Read the application role from app_metadata — this field is
+            // server-controlled (written by custom_access_token_hook reading
+            // public.users.role). user_metadata is user-editable via
+            // supabase.auth.updateUser() and MUST NOT be used for authz.
+            role = (decoded.app_metadata as Record<string, unknown> | undefined)?.role as string | undefined;
 
             if (!role) {
-                request.log.warn({ sub: decoded.sub }, "User role missing in token metadata");
+                request.log.warn({ sub: decoded.sub }, "User app_metadata.role missing in token — custom_access_token_hook may not have run");
                 throw new UnauthorizedError("User role missing in token metadata");
             }
 

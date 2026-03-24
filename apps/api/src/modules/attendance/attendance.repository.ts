@@ -121,6 +121,30 @@ export const attendanceRepository = {
   },
 
   /**
+   * Returns the checkin_at timestamp for an active session.
+   * Used by the locations service to reject GPS points recorded before the
+   * session started (replay / clock-skew guard).
+   * Returns null if the session is not found in the org (should not occur in
+   * practice after validateSessionActive has already confirmed the session).
+   */
+  async getSessionCheckinAt(
+    request: FastifyRequest,
+    sessionId: string,
+  ): Promise<string | null> {
+    const { data, error } = await orgTable(request, "attendance_sessions")
+      .select("checkin_at")
+      .eq("id", sessionId)
+      .is("checkout_at", null)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch session checkin time: ${error.message}`);
+    }
+    return (data as { checkin_at: string } | null)?.checkin_at ?? null;
+  },
+
+  /**
    * Check whether an active employee exists within the requesting organization.
    * Used by the service layer to provide a clear error before hitting DB constraints.
    */
@@ -213,7 +237,7 @@ export const attendanceRepository = {
 
     const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
       const emp = row.employees as { name?: string; employee_code?: string } | null;
-      const { employees: _emp, ...rest } = row;
+      const { employees: _, ...rest } = row;
       return {
         ...rest,
         employee_name: emp?.name ?? null,
@@ -382,7 +406,7 @@ export const attendanceRepository = {
 
     const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
       const emp = row.employees as { name?: string; employee_code?: string } | null;
-      const { employees: _emp, ...rest } = row;
+      const { employees: _, ...rest } = row;
       return {
         ...rest,
         employee_name: emp?.name ?? null,

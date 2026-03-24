@@ -16,6 +16,7 @@ vi.mock("../../../src/modules/attendance/attendance.repository.js", () => ({
     findSessionsByUser: vi.fn(),
     findSessionsByOrg: vi.fn(),
     validateSessionActive: vi.fn(),
+    getSessionCheckinAt: vi.fn(),
     upsertLatestSession: vi.fn().mockResolvedValue(undefined),
     updateLatestSessionDistance: vi.fn().mockResolvedValue(undefined),
   },

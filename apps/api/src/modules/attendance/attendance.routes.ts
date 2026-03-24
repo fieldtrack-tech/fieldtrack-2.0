@@ -1,9 +1,9 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
-import { paginationSchema, orgSessionsQuerySchema } from "./attendance.schema.js";
+import { paginationSchema } from "./attendance.schema.js";
 
 /**
  * Attendance routes — all endpoints require authentication.
@@ -63,20 +63,23 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
     attendanceController.getMySessions,
   );
 
-  // Org sessions — ADMIN only
-  // @deprecated Use GET /admin/sessions instead.
+  // Org sessions — DEPRECATED (MIN2)
+  // This route was replaced by GET /admin/sessions in Phase 16.
+  // Returns 410 Gone so clients receive a clear signal to migrate.
   app.get(
     "/attendance/org-sessions",
     {
       schema: {
         tags: ["deprecated"],
-        description: "Deprecated: use GET /admin/sessions",
-        querystring: orgSessionsQuerySchema,
-
+        description: "Removed: use GET /admin/sessions instead.",
       },
-      // preValidation ensures 401/403 fires before querystring validation
       preValidation: [authenticate, requireRole("ADMIN")],
     },
-    attendanceController.getOrgSessions,
+    async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+      reply.status(410).send({
+        success: false,
+        error: "GET /attendance/org-sessions has been removed. Use GET /admin/sessions instead.",
+      });
+    },
   );
 }
