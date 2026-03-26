@@ -122,6 +122,9 @@ export interface BackendEnvContract {
   MAX_SESSION_DURATION_HOURS: number;
   WORKER_CONCURRENCY: number;
   ANALYTICS_WORKER_CONCURRENCY: number;
+
+  // Infrastructure availability
+  WORKERS_ENABLED: boolean;
 }
 
 /**
@@ -232,11 +235,7 @@ export const ENV_VARS = {
   MAX_SESSION_DURATION_HOURS:   "MAX_SESSION_DURATION_HOURS",
   WORKER_CONCURRENCY:           "WORKER_CONCURRENCY",
   ANALYTICS_WORKER_CONCURRENCY: "ANALYTICS_WORKER_CONCURRENCY",
-
-  // ── CI-mode flags (not in env schema — runtime overrides) ─────────────────
-  CI_MODE:                 "CI_MODE",
-  SKIP_EXTERNAL_SERVICES:  "SKIP_EXTERNAL_SERVICES",
-  CI:                      "CI",
+  WORKERS_ENABLED:              "WORKERS_ENABLED",
 
   // ── Frontend (NEXT_PUBLIC_*) ───────────────────────────────────────────────
   NEXT_PUBLIC_API_BASE_URL:      "NEXT_PUBLIC_API_BASE_URL",
