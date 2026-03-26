@@ -469,7 +469,6 @@ if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
         _ft_log "msg='SHA differs from running image -- proceeding' running=${_RUNNING_IMAGE:-none} target=$IMAGE"
     fi
     unset _RUNNING_IMAGE
-fi
 
 # ---------------------------------------------------------------------------
 # [3/7] START INACTIVE CONTAINER

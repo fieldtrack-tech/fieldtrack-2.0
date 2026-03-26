@@ -1,7 +1,4 @@
 name: Sync beta ← master
-# After deploy succeeds on master, merge master back into beta so both branches
-# stay aligned. Uses GITHUB_TOKEN (default) for the push — this intentionally
-# does NOT trigger auto-pr.yml (GitHub skips workflows triggered by GITHUB_TOKEN).
 
 on:
   workflow_run:
@@ -26,22 +23,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure Git identity
+      - name: Configure Git
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-      - name: Show commits that will be lost on beta
+      - name: Fetch branches
         run: |
-          echo "=== Commits on beta NOT on master (will be overwritten) ==="
-          git log origin/master..origin/beta --oneline || echo "(none — beta is already up to date with master)"
-          echo "============================================================"
+          git fetch origin master
+          git fetch origin beta
 
-      - name: Sync master → beta (force reset)
+      - name: Show overwritten commits
+        run: |
+          echo "=== Overwritten commits ==="
+          git log origin/master..origin/beta --oneline || echo "(none)"
+          echo "==========================="
+
+      - name: Sync beta to master
+        run: |
+          git checkout -B beta origin/master
+          git push origin beta --force
+          echo "✓ beta synced"
+
+      - name: Verify
         run: |
           git fetch origin
-          git checkout beta
-          git reset --hard origin/master
-          git push origin beta --force
-          echo "✓ beta now matches master exactly"
-          git log --oneline -3
+          git log origin/beta -3 --oneline
