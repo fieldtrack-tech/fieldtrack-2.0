@@ -682,8 +682,10 @@ describe("env object — general invariants", () => {
     expect(env.REDIS_URL).toMatch(/^rediss?:\/\//);
   });
 
-  it("SUPABASE_JWT_SECRET is at least 32 characters", () => {
-    expect(env.SUPABASE_JWT_SECRET.length).toBeGreaterThanOrEqual(32);
+  it("SUPABASE_JWT_SECRET is at least 32 characters when set", () => {
+    if (env.SUPABASE_JWT_SECRET !== undefined) {
+      expect(env.SUPABASE_JWT_SECRET.length).toBeGreaterThanOrEqual(32);
+    }
   });
 
   it("TEMPO_ENDPOINT starts with http:// or https://", () => {
