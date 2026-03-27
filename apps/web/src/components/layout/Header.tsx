@@ -2,13 +2,13 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Menu,
   LogOut,
   ChevronDown,
   UserCircle,
   Search,
-  MapPin,
   Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -143,13 +143,15 @@ export function Header() {
             <SheetContent side="left" className="w-64 p-0 bg-sidebar border-r border-border/60">
               <SheetHeader className="flex h-14 items-center justify-start px-4 border-b border-border/60">
                 <SheetTitle className="flex items-center gap-2 text-[15px] font-bold">
-                  <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
-                    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
-                      <path d="M5 4h10v2H7v3h7v2H7v5H5V4z" fill="white" />
-                    </svg>
-                    <div className="absolute -right-1 -top-1 flex h-3 w-3 items-center justify-center rounded-full bg-[#1A4FD0] ring-2 ring-sidebar">
-                      <MapPin className="h-1.5 w-1.5 text-white" strokeWidth={3} />
-                    </div>
+                  <div className="relative flex h-7 w-7 items-center justify-center rounded-lg overflow-hidden shrink-0">
+                    <Image
+                      src="/logo/logo.png"
+                      alt="FieldTrack"
+                      width={28}
+                      height={28}
+                      className="h-full w-full object-cover"
+                      priority
+                    />
                   </div>
                   FieldTrack
                 </SheetTitle>

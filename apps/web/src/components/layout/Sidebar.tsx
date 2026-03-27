@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,7 +13,6 @@ import {
   Activity,
   UserCircle,
   Trophy,
-  MapPin,
   ChevronLeft,
   ChevronRight,
   Users,
@@ -27,20 +27,16 @@ import { useMyProfile } from "@/hooks/queries/useProfile";
 function BrandMark({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={cn("flex items-center gap-2.5 transition-all duration-300", collapsed && "justify-center")}>
-      {/* Logo mark: matches "F + location pin" from brand logo */}
-      <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary shadow-sm">
-        {/* Geometric "F" shape — white */}
-        <svg viewBox="0 0 20 20" fill="none" className="h-[18px] w-[18px]">
-          <path
-            d="M5 4h10v2H7v3h7v2H7v5H5V4z"
-            fill="white"
-            fillOpacity="0.95"
-          />
-        </svg>
-        {/* Blue location pin overlay badge */}
-        <div className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#1A4FD0] ring-2 ring-sidebar">
-          <MapPin className="h-2 w-2 text-white" strokeWidth={2.5} />
-        </div>
+      {/* Logo mark: image asset */}
+      <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg overflow-hidden">
+        <Image
+          src="/logo/logo.png"
+          alt="FieldTrack"
+          width={32}
+          height={32}
+          className="h-full w-full object-cover"
+          priority
+        />
       </div>
 
       <AnimatePresence>

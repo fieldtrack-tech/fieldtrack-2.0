@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ErrorBanner } from "@/components/ErrorBanner";
-import { MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function LoginPage() {
@@ -50,13 +50,15 @@ export default function LoginPage() {
       <div className="relative z-10 w-full max-w-sm">
         {/* Logo + wordmark */}
         <div className="mb-8 flex flex-col items-center gap-4">
-          <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-primary shadow-brand">
-            <svg viewBox="0 0 28 28" fill="none" className="h-7 w-7">
-              <path d="M6 5h16v3H9v4.5H20v3H9v8H6V5z" fill="white" fillOpacity="0.95" />
-            </svg>
-            <div className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#1A4FD0] ring-2 ring-background">
-              <MapPin className="h-2.5 w-2.5 text-white" strokeWidth={2.5} />
-            </div>
+          <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl overflow-hidden shadow-brand">
+            <Image
+              src="/logo/logo.png"
+              alt="FieldTrack"
+              width={56}
+              height={56}
+              className="h-full w-full object-cover"
+              priority
+            />
           </div>
           <div className="text-center">
             <h1 className="text-xl font-bold tracking-tight text-foreground">FieldTrack</h1>
