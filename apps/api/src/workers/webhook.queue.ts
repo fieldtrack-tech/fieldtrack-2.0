@@ -136,7 +136,7 @@ export async function enqueueWebhookDelivery(
   }
 
   await queue.add(
-    "deliver",
+    "deliver-webhook",
     data,
     {
       jobId: `delivery:${data.delivery_id}:${data.attempt_number}`,

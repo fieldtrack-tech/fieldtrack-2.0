@@ -170,10 +170,14 @@ async function createAndEnqueueDelivery(
   };
 
   try {
+    log.info(
+      { deliveryId: delivery.id, webhookId: webhook.id, eventType, orgId },
+      "webhook-event.service: adding job to queue",
+    );
     await enqueueWebhookDelivery(jobData, WEBHOOK_RETRY_DELAYS_MS[0]);
     log.info(
       { deliveryId: delivery.id, webhookId: webhook.id, eventType, orgId },
-      "webhook-event.service: enqueued delivery job",
+      "webhook-event.service: job added to queue",
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
