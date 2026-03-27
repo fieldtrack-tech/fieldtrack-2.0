@@ -164,6 +164,22 @@ export type EventDataMap = {
     /** Admin-supplied rejection reason; undefined if not provided */
     rejection_comment: string | undefined;
   };
+
+  // ── Employees ──────────────────────────────────────────────────────────────
+
+  /**
+   * Fired when an admin creates a new employee record.
+   *
+   * Contains: the new employee's id, code, and name so subscribers can
+   * react to org roster changes without an additional API call.
+   */
+  "employee.created": {
+    employee_id: string;
+    employee_code: string;
+    name: string;
+    /** ISO timestamp — copied from employees.created_at */
+    created_at: string;
+  };
 };
 
 export type EventName = keyof EventDataMap;

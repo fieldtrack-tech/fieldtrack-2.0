@@ -7,6 +7,7 @@ import {
 } from "./employees.schema.js";
 import { ok, fail, paginated, handleError } from "../../utils/response.js";
 import { NotFoundError } from "../../utils/errors.js";
+import { emitEvent } from "../../utils/event-bus.js";
 
 export const employeesController = {
   /**
@@ -28,6 +29,16 @@ export const employeesController = {
         },
         "Employee created",
       );
+
+      emitEvent("employee.created", {
+        organization_id: request.organizationId,
+        data: {
+          employee_id:   employee.id,
+          employee_code: employee.employee_code,
+          name:          employee.name,
+          created_at:    employee.created_at,
+        },
+      });
 
       reply.status(201).send(ok(employee));
     } catch (error) {

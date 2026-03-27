@@ -46,12 +46,18 @@ export function areWorkersStarted(): boolean {
  * This keeps worker lifecycle out of module-import side effects.
  */
 export async function startWorkers(app: FastifyInstance): Promise<void> {
-  const [{ startDistanceWorker }, { startAnalyticsWorker }] = await Promise.all([
+  const [
+    { startDistanceWorker },
+    { startAnalyticsWorker },
+    { startWebhookWorker },
+  ] = await Promise.all([
     import("./distance.worker.js"),
     import("./analytics.worker.js"),
+    import("./webhook.worker.js"),
   ]);
 
   startDistanceWorker(app);
   startAnalyticsWorker(app);
+  startWebhookWorker(app);
   workersStarted = true;
 }

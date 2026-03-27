@@ -629,8 +629,143 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }      webhook_deliveries: {
+        Row: {
+          id: string
+          webhook_id: string
+          event_id: string
+          organization_id: string
+          status: string
+          attempt_count: number
+          response_status: number | null
+          response_body: string | null
+          last_attempt_at: string | null
+          next_retry_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          webhook_id: string
+          event_id: string
+          organization_id: string
+          status?: string
+          attempt_count?: number
+          response_status?: number | null
+          response_body?: string | null
+          last_attempt_at?: string | null
+          next_retry_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          webhook_id?: string
+          event_id?: string
+          organization_id?: string
+          status?: string
+          attempt_count?: number
+          response_status?: number | null
+          response_body?: string | null
+          last_attempt_at?: string | null
+          next_retry_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhook_deliveries_webhook_id_fkey"
+            columns: ["webhook_id"]
+            isOneToOne: false
+            referencedRelation: "webhooks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "webhook_deliveries_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "webhook_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "webhook_deliveries_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
-    }
+      webhook_events: {
+        Row: {
+          id: string
+          organization_id: string
+          event_type: string
+          payload: Json
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          event_type: string
+          payload?: Json
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          event_type?: string
+          payload?: Json
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhook_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      webhooks: {
+        Row: {
+          id: string
+          organization_id: string
+          url: string
+          secret: string
+          is_active: boolean
+          events: string[]
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          url: string
+          secret: string
+          is_active?: boolean
+          events?: string[]
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          url?: string
+          secret?: string
+          is_active?: boolean
+          events?: string[]
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhooks_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }    }
     Views: {
       [_ in never]: never
     }

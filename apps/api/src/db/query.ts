@@ -37,6 +37,9 @@ export type OrgScopedTable = Extract<
   | "org_daily_metrics"
   | "org_dashboard_snapshot"
   | "session_summaries"
+  | "webhook_deliveries"
+  | "webhook_events"
+  | "webhooks"
 >;
 
 export function orgTable(
