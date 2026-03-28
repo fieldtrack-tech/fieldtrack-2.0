@@ -6,6 +6,18 @@
 #                      category and are excluded automatically — no entry here needed.
 #   --severity HIGH,CRITICAL   Only fixable HIGH/CRITICAL issues block the pipeline.
 #
+# Base image strategy:
+#   Both node:24.2.0-bookworm-slim and gcr.io/distroless/nodejs24-debian12:nonroot
+#   are pinned by digest. The weekly update-base-images.yml workflow rotates digests
+#   automatically, pulling in security patches as soon as Google publishes them.
+#
+# npm dependency status (last verified: 2026-03-28):
+#   npm audit --omit=dev reports 0 vulnerabilities.
+#   Resolved in this pass (all were MODERATE, none HIGH/CRITICAL):
+#     - fastify@<=5.8.2 (GHSA-444r-cwp2-x5xf) → patched by upgrade to 5.8.3+
+#     - brace-expansion@4.0.0-5.0.4 (GHSA-f886-m6hf-6m8v) → patched via lockfile
+#     - yaml@2.0.0-2.8.2 (GHSA-48c2-rrv3-qjmp) → patched via lockfile
+#
 # Entries in this file are for the narrow category of CVEs that:
 #   a) Have a "fixed version" listed in Trivy (so --ignore-unfixed does NOT filter them), AND
 #   b) Have been assessed as non-exploitable or non-applicable in this context.
@@ -27,3 +39,18 @@
 # Add an explicit entry here ONLY if a "fixed version" appears in Trivy's report
 # and we still need to suppress it for a documented reason.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─── DISTROLESS RUNTIME NOTES ────────────────────────────────────────────────
+# gcr.io/distroless/nodejs24-debian12:nonroot contains only:
+#   - Node.js 24 runtime (libssl via OpenSSL, not BusyBox — distroless is Debian, NOT Alpine)
+#   - Minimal glibc from Debian 12 bookworm
+#   - No shell, no package manager, no curl, no BusyBox
+# ANY reported BusyBox CVEs in a scan of this image indicate a stale Trivy DB
+# or a scan of the wrong image. BusyBox is not present in Debian-based distroless.
+#
+# OS-level CVEs (OpenSSL, glibc) for this image are handled by:
+#   1. --ignore-unfixed flag in both pr.yml and deploy.yml (filters unfixed Debian CVEs)
+#   2. Weekly digest rotation (update-base-images.yml) pulling latest Google patches
+#   3. SARIF upload to GitHub Security tab for historical tracking
+# ─────────────────────────────────────────────────────────────────────────────
+

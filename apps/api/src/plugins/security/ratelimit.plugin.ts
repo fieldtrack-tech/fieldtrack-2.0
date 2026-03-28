@@ -68,7 +68,27 @@ return count
 
 const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     if (!shouldStartWorkers()) {
-        fastify.log.info("security-rate-limit plugin SKIPPED (WORKERS_ENABLED=false — Redis not provisioned)");
+        // Redis is not provisioned (WORKERS_ENABLED=false).
+        // Fall back to in-memory rate limiting so the API is never entirely
+        // unprotected. In-memory limits are intentionally lower than the
+        // Redis-backed tier because the counter is per-process (not shared
+        // across replicas), making per-user tracking less accurate.
+        fastify.log.warn(
+            "security-rate-limit plugin using in-memory fallback (Redis not provisioned) — limits: 200 req/min",
+        );
+        await fastify.register(fastifyRateLimit, {
+            global: true,
+            hook: "preHandler",
+            max: 200,
+            timeWindow: "1 minute",
+            allowList: ["127.0.0.1", "::1"],
+            errorResponseBuilder: (_request, context) => ({
+                success: false,
+                error: "Too many requests",
+                retryAfter: context.after,
+            }),
+        });
+        fastify.log.info("security-rate-limit plugin registered (in-memory fallback, 200 req/min)");
         return;
     }
 
