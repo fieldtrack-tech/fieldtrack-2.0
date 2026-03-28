@@ -1,11 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
 import { OrgSummaryData, TopPerformerEntry, SessionTrendEntry, LeaderboardEntry } from "@/types";
 
-export function useOrgSummary(from?: string, to?: string) {
+export function useOrgSummary(from?: string, to?: string, enabled = true) {
   return useQuery<OrgSummaryData>({
     queryKey: ["orgSummary", from, to],
     queryFn: () => {
@@ -14,6 +14,9 @@ export function useOrgSummary(from?: string, to?: string) {
       if (to) params["to"] = to;
       return apiGet<OrgSummaryData>(API.orgSummary, params);
     },
+    enabled,
+    staleTime: 30_000,        // dashboard stats: fresh for 30s
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -32,6 +35,8 @@ export function useTopPerformers(
       if (to) params["to"] = to;
       return apiGet<TopPerformerEntry[]>(API.topPerformers, params);
     },
+    staleTime: 60_000,        // chart data: fresh for 1 min
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -44,6 +49,8 @@ export function useSessionTrend(from?: string, to?: string) {
       if (to) params["to"] = to;
       return apiGet<SessionTrendEntry[]>(API.sessionTrend, params);
     },
+    staleTime: 60_000,        // trend chart: fresh for 1 min
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -62,5 +69,7 @@ export function useLeaderboard(
       if (to) params["to"] = to;
       return apiGet<LeaderboardEntry[]>(API.leaderboard, params);
     },
+    staleTime: 120_000,       // ranking: fresh for 2 min (slow-moving)
+    placeholderData: keepPreviousData,
   });
 }

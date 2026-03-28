@@ -6,6 +6,11 @@ import { ApiError, ApiResponse, PaginatedResponse } from "@/types";
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
 
+export function clearAuthTokenCache(): void {
+  cachedToken = null;
+  tokenExpiry = 0;
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const now = Date.now();
   
@@ -40,8 +45,7 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 async function handleAuthFailure(): Promise<void> {
   // Clear cached token
-  cachedToken = null;
-  tokenExpiry = 0;
+  clearAuthTokenCache();
   
   // Sign out and redirect
   await supabase.auth.signOut();
@@ -281,3 +285,34 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 
   return handleResponse<T>(response);
 }
+
+export async function apiDelete(path: string): Promise<void> {
+  if (!env.NEXT_PUBLIC_API_BASE_URL) {
+    throw new ApiError(
+      "NEXT_PUBLIC_API_BASE_URL is not set.",
+      500
+    );
+  }
+  const headers = await getAuthHeaders();
+  const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_BASE_URL}${path}`, {
+    method: "DELETE",
+    headers,
+  });
+
+  // 204 No Content is success — nothing to parse
+  if (response.status === 204) return;
+
+  if (response.status === 401) {
+    await handleAuthFailure();
+    throw new ApiError("Unauthorized. Please log in again.", 401);
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new ApiError(
+      `HTTP ${response.status} error from API`,
+      response.status
+    );
+  }
+}
+

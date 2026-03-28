@@ -298,6 +298,39 @@ const envSchema = z
     MAX_QUEUE_DEPTH: z.coerce.number().int().positive().default(1_000),
 
     /**
+     * Maximum number of jobs that may sit in the webhook DLQ before new
+     * entries are rejected.  When the cap is reached the oldest job is
+     * archived and evicted to make room for the new entry.
+      * Default: 10 000 jobs.
+     */
+        WEBHOOK_DLQ_MAX_SIZE: z.coerce.number().int().positive().default(10_000),
+
+    /**
+     * Number of days to retain webhook DLQ entries before they are purged.
+     * Jobs older than this are archived to webhook_dlq_archive and removed.
+     * Range: 14–30 days.  Default: 30 days.
+     */
+    WEBHOOK_DLQ_RETENTION_DAYS: z.coerce
+      .number()
+      .int()
+      .min(14, "WEBHOOK_DLQ_RETENTION_DAYS must be at least 14")
+      .max(30, "WEBHOOK_DLQ_RETENTION_DAYS must be at most 30")
+      .default(30),
+
+    /**
+     * Maximum webhook payload size in bytes for outbound delivery.
+     * Deliveries above this threshold are marked failed and moved to DLQ to
+     * prevent oversized payload retries from consuming worker capacity.
+     * Default: 256 KiB.
+     */
+    WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce
+      .number()
+      .int()
+      .min(16_384, "WEBHOOK_MAX_PAYLOAD_BYTES must be at least 16 KiB")
+      .max(1_000_000, "WEBHOOK_MAX_PAYLOAD_BYTES must be at most 1_000_000 bytes")
+      .default(262_144),
+
+    /**
      * Maximum GPS point count per session before the recalculation job is
      * rejected. Guards against pathological data saturating the event loop.
      */
@@ -338,6 +371,21 @@ const envSchema = z
       .int()
       .min(1, "ANALYTICS_WORKER_CONCURRENCY must be at least 1")
       .max(50, "ANALYTICS_WORKER_CONCURRENCY must be at most 50 (database pressure above this is counterproductive)")
+      .default(5),
+
+    /**
+     * Number of webhook delivery jobs the webhook worker processes
+     * concurrently per replica.  Default 5 provides enough throughput for
+     * most deployments.  Increase with caution — HTTP fan-out can exhaust
+     * the OS file descriptor limit at high concurrency.
+     *
+     * Range: 1–20.
+     */
+    WEBHOOK_WORKER_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1, "WEBHOOK_WORKER_CONCURRENCY must be at least 1")
+      .max(20, "WEBHOOK_WORKER_CONCURRENCY must be at most 20")
       .default(5),
 
     // ── Infrastructure availability ────────────────────────────────────────

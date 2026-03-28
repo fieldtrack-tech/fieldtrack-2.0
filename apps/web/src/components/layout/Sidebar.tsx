@@ -16,6 +16,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Users,
+  Map,
+  Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -176,6 +178,16 @@ export function SidebarNav({ collapsed = false }: { collapsed?: boolean }) {
           href: "/admin/employees",
           label: "Employees",
           icon: <Users className="h-4 w-4" />,
+        },
+        {
+          href: "/admin/monitoring/map",
+          label: "Live Map",
+          icon: <Map className="h-4 w-4" />,
+        },
+        {
+          href: "/admin/webhooks",
+          label: "Webhooks",
+          icon: <Webhook className="h-4 w-4" />,
         },
       ]
     : [];

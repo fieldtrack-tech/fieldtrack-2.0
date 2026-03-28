@@ -13,14 +13,17 @@
 import type { FastifyRequest } from "fastify";
 import { webhooksRepository } from "./webhooks.repository.js";
 import { validateWebhookUrl, InvalidWebhookUrlError } from "../../utils/url-validator.js";
-import { BadRequestError, NotFoundError } from "../../utils/errors.js";
+import { BadRequestError, NotFoundError, ServiceUnavailableError } from "../../utils/errors.js";
 import { enqueueWebhookDelivery } from "../../workers/webhook.queue.js";
+import { shouldStartWorkers } from "../../workers/startup.js";
 import type {
   CreateWebhookBody,
   UpdateWebhookBody,
   WebhookPublic,
   WebhookDelivery,
   DeliveryListQuery,
+  DlqListQuery,
+  WebhookDlqDelivery,
 } from "./webhooks.schema.js";
 
 export const webhooksService = {
@@ -86,6 +89,13 @@ export const webhooksService = {
     return webhooksRepository.listDeliveries(request, query);
   },
 
+  async listDlqDeliveries(
+    request: FastifyRequest,
+    query: DlqListQuery,
+  ): Promise<{ data: WebhookDlqDelivery[]; total: number }> {
+    return webhooksRepository.listDlqDeliveries(request, query);
+  },
+
   /**
    * Manually retry a delivery.
    *
@@ -102,6 +112,12 @@ export const webhooksService = {
   ): Promise<WebhookDelivery> {
     const delivery = await webhooksRepository.findDeliveryById(request, deliveryId);
     if (!delivery) throw new NotFoundError("Delivery not found");
+
+    if (!shouldStartWorkers()) {
+      throw new ServiceUnavailableError(
+        "Workers not enabled — webhook delivery requires WORKERS_ENABLED=true",
+      );
+    }
 
     if (delivery.status === "pending") {
       throw new BadRequestError("Delivery is already pending — retry not needed");

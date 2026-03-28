@@ -1,6 +1,47 @@
 groups:
 
 # ---------------------------------------------------------
+# RECORDING RULES
+# ---------------------------------------------------------
+
+- name: fieldtrack_recording_rules
+  rules:
+  - record: fieldtrack:api_requests_rate_5m
+    expr: sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[5m]))
+
+  - record: fieldtrack:api_errors_5xx_rate_5m
+    expr: sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[5m]))
+
+  - record: fieldtrack:api_error_rate_5m
+    expr: fieldtrack:api_errors_5xx_rate_5m / clamp_min(fieldtrack:api_requests_rate_5m, 1e-9)
+
+  - record: fieldtrack:api_error_rate_1h
+    expr: |
+      sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[1h]))
+      /
+      clamp_min(sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[1h])), 1e-9)
+
+  - record: fieldtrack:api_error_rate_6h
+    expr: |
+      sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[6h]))
+      /
+      clamp_min(sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[6h])), 1e-9)
+
+  - record: fieldtrack:webhook_failure_rate_5m
+    expr: |
+      sum(rate(webhook_failures_total[5m]))
+      /
+      clamp_min(sum(rate(webhook_deliveries_total[5m])), 1e-9)
+
+  - record: fieldtrack:api_error_budget_remaining_30d
+    expr: |
+      1 - (
+        sum(increase(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[30d]))
+        /
+        clamp_min(sum(increase(http_requests_total{job=~"fieldtrack-backend.*"}[30d])), 1)
+      )
+
+# ---------------------------------------------------------
 # API HEALTH
 # ---------------------------------------------------------
 
@@ -8,17 +49,23 @@ groups:
   rules:
 
   - alert: FieldTrackHighErrorRate
-    expr: |
-      sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[5m]))
-      /
-      sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[5m]))
-      > 0.05
+    expr: fieldtrack:api_error_rate_5m > 0.05
     for: 2m
     labels:
       severity: critical
     annotations:
       summary: "High API error rate"
       description: "5xx errors exceed 5%"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/ROLLBACK_QUICKREF.md"
+      runbook: |
+        Cause: Application throwing unhandled errors or DB/dependency failures.
+        Actions:
+          1. Check container logs: docker logs fieldtrack-api --tail 200
+          2. Check /system-health endpoint from VPS
+          3. Review recent deployments: git log --oneline -10
+          4. If DB: check Supabase dashboard for connection pool saturation
+          5. If memory: check HostMemoryPressure alert and restart container
+          6. Rollback if needed: see docs/ROLLBACK_QUICKREF.md
 
   - alert: FieldTrackHighLatency
     expr: |
@@ -32,6 +79,15 @@ groups:
     annotations:
       summary: "High API latency"
       description: "p95 latency above 1 second"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/SLO.md"
+      runbook: |
+        Cause: Slow DB queries, queue contention, or upstream dependency latency.
+        Actions:
+          1. Open Grafana latency panel (p95/p99) and identify spike start time
+          2. Check slow-response logs in Loki (`slow_response` and `very_slow_response`)
+          3. Check DB load and connection saturation in Supabase dashboard
+          4. Inspect queue backlogs via GET /admin/system-health
+          5. Roll back recent deployment if latency regression started post-release
 
   - alert: FieldTrackAvgLatencyHigh
     expr: |
@@ -45,6 +101,15 @@ groups:
     annotations:
       summary: "FieldTrack API latency exceeded threshold"
       description: "Average response time exceeded 500 ms for 5 minutes"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/SLO.md"
+      runbook: |
+        Cause: Sustained performance degradation across many routes.
+        Actions:
+          1. Compare avg latency with p95/p99 to identify broad vs tail issue
+          2. Review top routes by request rate and latency in Grafana
+          3. Inspect backend logs for DB timeout and retry patterns
+          4. Validate Redis and Supabase health via /ready and /system-health
+          5. Trigger rollback if regression is tied to latest deploy
 
 # ---------------------------------------------------------
 # WORKER ALERTS
@@ -61,6 +126,15 @@ groups:
     annotations:
       summary: "Distance worker jobs failing at high rate"
       description: "More than 3 distance recalculation jobs permanently failed in the last 5 minutes. Check Redis connectivity and the distance-engine queue."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/OBSERVABILITY_ARCHITECTURE.md"
+      runbook: |
+        Cause: Redis connectivity failure, Supabase query errors, or malformed GPS data.
+        Actions:
+          1. Check Redis: redis-cli -u $REDIS_URL ping
+          2. Check worker logs: docker logs fieldtrack-api | grep "Distance worker"
+          3. Inspect failed queue: GET /admin/system-health (worker section)
+          4. Replay stuck sessions via queue_retry_intents if needed
+          5. Check for GPS point anomalies (MAX_POINTS_PER_SESSION exceeded)
 
   - alert: AnalyticsQueueBacklogGrowing
     expr: analytics_queue_depth > 500
@@ -69,6 +143,16 @@ groups:
       severity: warning
     annotations:
       summary: "Analytics queue backlog high"
+      description: "Analytics queue depth exceeded 500 for 5 minutes"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/OBSERVABILITY_ARCHITECTURE.md"
+      runbook: |
+        Cause: Worker throughput below enqueue rate or downstream DB contention.
+        Actions:
+          1. Check analytics worker logs for repeated errors/timeouts
+          2. Inspect queue depth in GET /admin/system-health
+          3. Validate Redis latency and connection health
+          4. Check Supabase CPU/connection pressure
+          5. Temporarily scale worker concurrency if safe
 
   # Phase 22: Fire if more than 5 analytics jobs permanently fail within 5 minutes.
   # This indicates a systemic problem (bad DB schema change, Supabase outage, etc.)
@@ -81,6 +165,15 @@ groups:
     annotations:
       summary: "Analytics jobs failing at high rate"
       description: "More than 5 analytics jobs permanently failed (exhausted all retries) in the last 5 minutes. Check the analytics-failed dead letter queue and worker logs."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/OBSERVABILITY_ARCHITECTURE.md"
+      runbook: |
+        Cause: Supabase schema change, DB connection exhaustion, or analytics aggregation bug.
+        Actions:
+          1. Check worker logs: docker logs fieldtrack-api | grep "analytics"
+          2. Inspect dead letter queue via GET /admin/system-health
+          3. Verify DB schema: check employee_daily_metrics and org_daily_metrics tables
+          4. If transient: failed jobs auto-expire after 72 h; monitor retry_intents_dead metric
+          5. If persistent: hotfix deployment required — see docs/ROLLBACK_QUICKREF.md
 
 # ---------------------------------------------------------
 # HOST ALERTS
@@ -96,6 +189,16 @@ groups:
       severity: warning
     annotations:
       summary: "High CPU usage"
+      description: "Host CPU usage above 85% for 5 minutes"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/OBSERVABILITY_ARCHITECTURE.md"
+      runbook: |
+        Cause: Traffic surge, runaway process, or expensive query loops.
+        Actions:
+          1. Check top CPU consumers on host (`top`/`htop`)
+          2. Correlate with request rate and queue depth in Grafana
+          3. Inspect container logs for retry storms or hot loops
+          4. Scale out backend replicas or reduce noisy traffic source
+          5. Roll back if a recent deploy caused the spike
 
   - alert: HostMemoryPressure
     expr: |
@@ -108,6 +211,16 @@ groups:
       severity: warning
     annotations:
       summary: "High memory usage"
+      description: "Host memory usage above 85% for 5 minutes"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/ROLLBACK_QUICKREF.md"
+      runbook: |
+        Cause: Memory leak, oversized cache, or traffic burst.
+        Actions:
+          1. Inspect container RSS and heap charts in Grafana
+          2. Check process logs for OOM warnings and GC pressure
+          3. Restart affected container if memory does not recover
+          4. If recurring post-deploy, roll back and open incident
+          5. Confirm host swap/disk not under pressure simultaneously
 
   - alert: DiskAlmostFull
     expr: |
@@ -121,6 +234,16 @@ groups:
       severity: critical
     annotations:
       summary: "Disk usage above 85%"
+      description: "Root filesystem usage exceeded 85% for 5 minutes"
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/DEPLOYMENT.md"
+      runbook: |
+        Cause: Log growth, artifact buildup, or runaway temp files.
+        Actions:
+          1. Identify large directories (`du -sh /*` on host)
+          2. Rotate/prune Docker images and logs
+          3. Verify Loki/Promtail retention settings
+          4. Free space before deployment operations
+          5. Increase disk capacity if growth trend persists
 
 # ---------------------------------------------------------
 # DEPLOYMENT & INFRASTRUCTURE ALERTS
@@ -137,6 +260,15 @@ groups:
     annotations:
       summary: "Redis is unreachable"
       description: "Redis has been down for more than 2 minutes. BullMQ workers, rate limiting, and the auth context cache will all degrade until Redis recovers."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/ARCHITECTURE.md"
+      runbook: |
+        Cause: Redis container crash, OOM kill, or network partition.
+        Actions:
+          1. Check container: docker ps | grep redis; docker logs redis --tail 50
+          2. Restart if crashed: docker restart redis (or docker compose up -d redis)
+          3. Verify BullMQ reconnects: check worker logs after Redis recovery
+          4. Rate limiting degrades gracefully (requests allowed through) during outage
+          5. Circuit-breaker state is DB-backed and survives Redis restart
 
   - alert: DeploymentFailure
     expr: up{job=~"fieldtrack-backend.*"} == 0
@@ -146,6 +278,16 @@ groups:
     annotations:
       summary: "Backend container is down"
       description: "{{ $labels.job }} has been down for more than 2 minutes. Check deployment logs and container status."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/ROLLBACK_QUICKREF.md"
+      runbook: |
+        Cause: Container OOM, crash loop, failed deployment, or host issue.
+        Actions:
+          1. Check status: docker ps -a | grep fieldtrack
+          2. Inspect last 100 lines: docker logs fieldtrack-api --tail 100
+          3. Check exit code: docker inspect fieldtrack-api | jq '.[0].State'
+          4. Restart if safe: docker restart fieldtrack-api
+          5. Rollback if bad deploy: see docs/ROLLBACK_QUICKREF.md
+          6. Check host memory/disk: node_memory and node_filesystem alerts
 
   - alert: ReadinessCheckFailing
     expr: probe_success{job="fieldtrack-readiness"} == 0
@@ -155,6 +297,15 @@ groups:
     annotations:
       summary: "Readiness check failing"
       description: "/ready endpoint has been failing for 3 minutes. Check DB, Redis, and Supabase connectivity."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/ROLLBACK_QUICKREF.md"
+      runbook: |
+        Cause: One or more hard dependencies unhealthy (Redis/Supabase/BullMQ).
+        Actions:
+          1. Hit /ready and /health manually from VPS
+          2. Check Redis ping and Supabase connectivity
+          3. Inspect container logs for startup/recovery errors
+          4. Check worker state in /admin/system-health
+          5. Roll back if issue began immediately after deployment
 
 # ---------------------------------------------------------
 # TLS CERTIFICATE ALERTS
@@ -171,6 +322,15 @@ groups:
     annotations:
       summary: "TLS certificate expiring within 14 days"
       description: "Certificate for {{ $labels.instance }} expires in less than 14 days. Renew via certbot."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/DEPLOYMENT.md"
+      runbook: |
+        Cause: Certificate nearing expiry date.
+        Actions:
+          1. Verify expiry date using blackbox panel and `openssl s_client`
+          2. Renew certificate (certbot or managed provider)
+          3. Reload NGINX and confirm certificate chain
+          4. Recheck probe_ssl_earliest_cert_expiry metric
+          5. Confirm no stale cert served via CDN edge
 
   - alert: TLSCertExpired
     expr: probe_ssl_earliest_cert_expiry{job="fieldtrack-readiness"} - time() < 0
@@ -180,3 +340,220 @@ groups:
     annotations:
       summary: "TLS certificate has expired"
       description: "Certificate for {{ $labels.instance }} has expired. All HTTPS traffic is failing."
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/DEPLOYMENT.md"
+      runbook: |
+        Cause: Certificate renewal failed or cert not reloaded.
+        Actions:
+          1. Renew certificate immediately
+          2. Reload NGINX and verify HTTPS handshake
+          3. Validate Cloudflare/full-chain configuration
+          4. Confirm /health and /ready are reachable over HTTPS
+          5. Open incident and track customer impact window
+
+# ---------------------------------------------------------
+# WEBHOOK DELIVERY SLOs  (SLO 4 + SLO 5)
+# See docs/SLO.md for full SLO definitions and error-budget
+# burn-rate strategy.
+# ---------------------------------------------------------
+
+- name: fieldtrack_webhook_slo_alerts
+  rules:
+
+  # --- SLO 4: Webhook delivery permanent failure rate > 10% for 5 m (warning) --
+  - alert: WebhookDeliveryFailureRateWarning
+    expr: fieldtrack:webhook_failure_rate_5m > 0.10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Webhook permanent failure rate above 10%"
+      description: >-
+        More than 10% of webhook deliveries are permanently failing (all retries
+        exhausted) over the last 5 minutes.  Check receiver endpoints and circuit
+        breaker status.  DLQ jobs can be replayed via POST /admin/webhook-dlq/:id/replay.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/WEBHOOK_SIGNATURES.md"
+      runbook: |
+        Cause: Elevated webhook failures for one or more receivers.
+        Actions:
+          1. Check webhook worker logs for dominant error patterns
+          2. Inspect DLQ depth and recent failed deliveries
+          3. Confirm receiver endpoints are reachable and returning 2xx
+          4. Check circuit breaker status in webhooks table
+          5. Replay DLQ jobs after root cause is fixed
+
+  # --- SLO 4: Webhook delivery permanent failure rate > 30% for 2 m (critical) -
+  - alert: WebhookDeliveryFailureRateHigh
+    expr: fieldtrack:webhook_failure_rate_5m > 0.30
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Webhook permanent failure rate critically high (>30%)"
+      description: >-
+        Over 30% of webhook deliveries are permanently failing.  This is a
+        customer-visible outage for all orgs with active webhooks.  Investigate
+        immediately: check DB connectivity, receiver endpoints, and circuit breaker
+        state.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/WEBHOOK_SIGNATURES.md"
+      runbook: |
+        Cause: Mass endpoint failures, DB outage, or a code bug in the delivery worker.
+        Actions:
+          1. Check worker logs: docker logs fieldtrack-api | grep "webhook.worker"
+          2. Inspect DLQ: GET /admin/webhook-dlq (admin token required)
+          3. Check circuit breaker state: query webhooks table for circuit_open_until IS NOT NULL
+          4. Replay DLQ entries after fixing root cause: POST /admin/webhook-dlq/:id/replay
+          5. If DB issue: check Supabase dashboard, verify webhook_deliveries writes
+          6. If code bug: rollback deployment — see docs/ROLLBACK_QUICKREF.md
+
+  # --- SLO 5: DLQ depth above 100 for 30 min --------------------------------
+  - alert: WebhookDlqGrowing
+    expr: dlq_size{queue="webhook-delivery-dlq"} > 100
+    for: 30m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Webhook DLQ depth above 100 for 30 minutes"
+      description: >-
+        The webhook dead-letter queue has had more than 100 unprocessed jobs for
+        30 minutes.  This indicates sustained delivery failures that exceed the
+        normal transient-failure pattern.  Review DLQ via GET /admin/webhook-dlq
+        and replay or purge stale entries.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/OBSERVABILITY_ARCHITECTURE.md"
+      runbook: |
+        Cause: Persistent downstream delivery failures.
+        Actions:
+          1. Review DLQ entries and identify repeated endpoint failures
+          2. Confirm webhook receiver health and DNS/TLS validity
+          3. Inspect retry/error metrics and circuit breaker audit entries
+          4. Purge stale DLQ entries after archival is confirmed
+          5. Replay jobs only after receivers are healthy
+
+  # --- Circuit breaker: any webhook circuit opened (leading indicator) -------
+  #
+  # webhook_failures_total counts permanent failures; a sudden spike often
+  # indicates a circuit breaker tripped.  A short `for: 0m` (fires immediately)
+  # gives the earliest possible signal to investigate the affected endpoint.
+  - alert: WebhookCircuitBreakerOpened
+    expr: increase(webhook_failures_total[2m]) > 5
+    for: 0m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Webhook failure spike — possible circuit breaker activation"
+      description: >-
+        More than 5 permanent webhook failures occurred in the last 2 minutes.
+        A circuit breaker may have opened, pausing delivery to one or more
+        endpoints.  Check circuit breaker state in webhook_deliveries and the
+        webhooks.circuit_open_until column.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/WEBHOOK_SIGNATURES.md"
+      runbook: |
+        Cause: Rapid repeated delivery failures triggered circuit breaker protection.
+        Actions:
+          1. Query webhooks with circuit_open_until > now()
+          2. Validate receiver status codes and timeout behavior
+          3. Confirm auto-recovery scanner is running in worker logs
+          4. Check whether failures are payload/size related vs network
+          5. Re-enable/replay once endpoint stability is restored
+
+  # --- Rate limit burst spike -----------------------------------------------
+  - alert: RateLimitBurstSpike
+    expr: increase(security_rate_limit_hits_total[5m]) > 500
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Rate limiter blocking unusually high request volume"
+      description: >-
+        More than 500 requests were rate-limited in the last 5 minutes.  This
+        may indicate a misconfigured client, a burst from a single org, or the
+        start of a DoS attempt.  Review the rate-limit logs to identify the
+        offending org / IP.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/ARCHITECTURE.md"
+      runbook: |
+        Cause: Burst traffic beyond per-user/per-org sliding window limits.
+        Actions:
+          1. Inspect rate-limit logs for top offending keys
+          2. Confirm traffic is expected (batch job) vs malicious
+          3. Check Redis health to ensure limiter is functioning correctly
+          4. Apply temporary edge-level mitigation if attack suspected
+          5. Tune per-org/per-user thresholds only with incident review
+
+# ---------------------------------------------------------
+# API ERROR BUDGET BURN RATE  (SLO 3 multi-window alerting)
+# See docs/SLO.md §Error Budget Alert Strategy
+# ---------------------------------------------------------
+
+- name: fieldtrack_slo_error_budget
+  rules:
+
+  # Fast burn: 1 h window at 14x burn rate (>14% error rate)
+  # exhausts monthly error budget in ~2 days if sustained.
+  - alert: FieldTrackSloErrorBudgetBurnFast
+    expr: fieldtrack:api_error_rate_1h > 0.14
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "API error budget burning fast (14x rate)"
+      description: >-
+        The 1-hour error rate exceeds 14% (14x normal budget burn).  At this
+        rate the monthly error budget will be exhausted in under 2 days.
+        Investigate 5xx errors immediately - check logs, DB connectivity, and
+        recent deployments.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/SLO.md"
+      runbook: |
+        Cause: Sustained high error rate burning error budget at 14x the normal rate.
+        Actions:
+          1. Identify failing routes: check Grafana → FieldTrack API dashboard
+          2. Check container logs for exceptions: docker logs fieldtrack-api --tail 500
+          3. Check DB connectivity: /ready endpoint from VPS
+          4. If recent deploy: rollback immediately — see docs/ROLLBACK_QUICKREF.md
+          5. Open an incident; notify stakeholders if budget < 50%
+
+  # Slow burn: 6 h window at 6x burn rate (>6% error rate)
+  # exhausts monthly error budget in ~5 days if sustained.
+  - alert: FieldTrackSloErrorBudgetBurnSlow
+    expr: fieldtrack:api_error_rate_6h > 0.06
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "API error budget burning (6x rate over 6 h)"
+      description: >-
+        The 6-hour error rate exceeds 6% (6x normal budget burn).  Open a ticket
+        and investigate the root cause before the error budget is exhausted.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/SLO.md"
+      runbook: |
+        Cause: Sustained elevated 5xx errors over a long window.
+        Actions:
+          1. Review error budget remaining metric on Grafana dashboard
+          2. Identify top failing routes and error classes
+          3. Correlate with deployments and infra incidents
+          4. Open reliability ticket and assign owner
+          5. Plan mitigations before entering critical burn threshold
+
+  # p99 latency SLO breach - 2 s threshold (SLO 2)
+  - alert: FieldTrackLatencyP99High
+    expr: |
+      histogram_quantile(
+        0.99,
+        sum(rate(http_request_duration_seconds_bucket{job=~"fieldtrack-backend.*"}[10m])) by (le)
+      ) > 2
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "API p99 latency above 2 s (SLO 2 breach)"
+      description: >-
+        The 99th-percentile API response time has been above 2 seconds for 10
+        minutes.  This breaches the p99 latency SLO defined in docs/SLO.md.
+        Check slow queries, worker queue depths, and DB connection pool saturation.
+      runbook_url: "https://github.com/fieldtrack/fieldtrack/blob/main/docs/SLO.md"
+      runbook: |
+        Cause: Tail-latency degradation affecting a subset of requests.
+        Actions:
+          1. Inspect p99 panel and compare with p95 for tail amplification
+          2. Review very_slow_response logs for route-level concentration
+          3. Check DB wait events and queue backlog growth
+          4. Reduce load or scale services if saturation detected
+          5. Roll back if latency regression tracks a release

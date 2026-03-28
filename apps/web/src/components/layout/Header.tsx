@@ -117,13 +117,13 @@ function AvatarInitials({ name, size = "sm" }: { name: string; size?: "sm" | "md
 
 export function Header() {
   const { user, role, logout } = useAuth();
+  const isAdmin = role === "ADMIN";
   const { data: profile } = useMyProfile();
   const { from, to } = useTodayRange();
-  const { data: orgSummary } = useOrgSummary(from, to);
+  const { data: orgSummary } = useOrgSummary(from, to, isAdmin);
   const today = useTodayString();
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const isAdmin = role === "ADMIN";
   const displayName = profile?.name ?? user?.email?.split("@")[0] ?? "Account";
   const firstName = displayName.split(" ")[0];
 

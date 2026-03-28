@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getConfigHash } from "../config/env.js";
+import { shouldStartWorkers, areWorkersStarted, getExpectedWorkerCount } from "../workers/startup.js";
 
 interface HealthResponse {
         status: string;
@@ -73,7 +74,6 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         const { supabaseServiceClient } = await import("../config/supabase.js");
         const { distanceQueue } = await import("../workers/distance.queue.js");
         const { analyticsQueue } = await import("../workers/analytics.queue.js");
-        const { shouldStartWorkers, areWorkersStarted } = await import("../workers/startup.js");
 
         const checks: ReadyResponse["checks"] = {
             redis: "error",
@@ -106,11 +106,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         checks.redis = redisResult.status === "fulfilled" ? "ok" : "error";
         checks.supabase = supabaseResult.status === "fulfilled" ? "ok" : "error";
         checks.bullmq = bullmqResult.status === "fulfilled" ? "ok" : "error";
+        const expected = getExpectedWorkerCount();
         if (!shouldStartWorkers()) {
-            checks.workers = { status: "skipped", active: 0, expected: 2 };
+            checks.workers = { status: "skipped", active: 0, expected };
         } else {
             const started = areWorkersStarted();
-            checks.workers = { status: started ? "ok" : "error", active: started ? 2 : 0, expected: 2 };
+            checks.workers = { status: started ? "ok" : "error", active: started ? expected : 0, expected };
         }
 
         const ready = checks.redis === "ok" && checks.supabase === "ok" && checks.bullmq === "ok";

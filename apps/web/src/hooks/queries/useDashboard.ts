@@ -9,6 +9,7 @@ export function useMyDashboard() {
   return useQuery<DashboardSummary>({
     queryKey: ["myDashboard"],
     queryFn: () => apiGet<DashboardSummary>(API.myDashboard),
+    staleTime: 30_000,
   });
 }
 

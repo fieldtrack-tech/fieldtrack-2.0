@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { Session, User, AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { derivePermissions } from "@/lib/permissions";
+import { extractRoleFromSession } from "@/lib/auth/role";
 import { UserRole, UserPermissions } from "@/types";
 
 interface AuthContextValue {
@@ -40,10 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   function extractRole(s: Session): UserRole {
-    const metaRole =
-      (s.user.user_metadata?.role as UserRole | undefined) ??
-      (s.user.app_metadata?.role as UserRole | undefined);
-    return metaRole ?? "EMPLOYEE";
+    return extractRoleFromSession(s, { allowUserMetadataFallback: true });
   }
 
   useEffect(() => {

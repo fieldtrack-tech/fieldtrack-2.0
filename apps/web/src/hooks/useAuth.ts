@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { extractRoleFromSession } from "@/lib/auth/role";
+import { clearAuthTokenCache } from "@/lib/api/client";
 import { UserRole } from "@/types";
 import { queryClient } from "@/lib/query-client";
 
@@ -11,15 +13,15 @@ export function useAuth() {
   const { user, session, role, permissions, isLoading } = useAuthContext();
 
   async function login(email: string, password: string): Promise<UserRole> {
+    // Prevent stale bearer reuse when switching users (e.g. employee -> admin).
+    clearAuthTokenCache();
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    const metaRole =
-      (data.session.user.user_metadata?.role as UserRole | undefined) ??
-      (data.session.user.app_metadata?.role as UserRole | undefined);
-    return metaRole ?? "EMPLOYEE";
+    return extractRoleFromSession(data.session, { allowUserMetadataFallback: true });
   }
 
   async function logout(): Promise<void> {
+    clearAuthTokenCache();
     await supabase.auth.signOut();
     queryClient.clear();
     router.push("/login");

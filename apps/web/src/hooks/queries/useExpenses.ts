@@ -21,6 +21,8 @@ export function useMyExpenses(page: number, limit: number) {
         page: String(page),
         limit: String(limit),
       }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -32,6 +34,8 @@ export function useOrgExpenses(page: number, limit: number) {
         page: String(page),
         limit: String(limit),
       }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -63,7 +67,8 @@ export function useAllOrgExpenses() {
     queryFn: ({ pageParam }) =>
       apiGetPaginated<Expense>(API.orgExpenses, {
         page: String(pageParam),
-        limit: "1000",
+        // Backend validates limit <= 100 for /admin/expenses.
+        limit: "100",
       }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {

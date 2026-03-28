@@ -1,6 +1,21 @@
 import type { FastifyInstance } from "fastify";
 import { env } from "../config/env.js";
 
+// ─── Worker registry ──────────────────────────────────────────────────────────
+
+/**
+ * Canonical list of all background worker types.
+ * Adding a new worker here automatically propagates the expected count to
+ * /ready, /admin/system-health, and all boot logs — no manual number updates.
+ */
+export const WORKER_TYPES = ["distance", "analytics", "webhook"] as const;
+export type WorkerType = (typeof WORKER_TYPES)[number];
+
+/** Expected number of background workers in a fully-started process. */
+export function getExpectedWorkerCount(): number {
+  return WORKER_TYPES.length;
+}
+
 /**
  * Overrides accepted by shouldStartWorkers() for unit-test injection.
  * Production code always calls shouldStartWorkers() with no arguments.

@@ -98,8 +98,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Performance timing — logs every response with full correlation context:
   // requestId, method, route, status, elapsed ms, userId, organizationId.
-  // Emits an additional WARN for responses slower than 200 ms so slow endpoints
-  // are immediately visible in Grafana/Loki without a query.
+  // Emits WARN for responses slower than 500 ms so slow endpoints are
+  // immediately visible in Grafana/Loki without a query.
+  // Emits ERROR for responses slower than 2000 ms — indicates a serious problem.
   app.addHook("onResponse", async (request, reply) => {
     const ms = Math.round(reply.elapsedTime);
     const logPayload = {
@@ -112,8 +113,10 @@ export async function buildApp(): Promise<FastifyInstance> {
       userId: (request as { user?: { sub?: string } }).user?.sub,
       organizationId: (request as { organizationId?: string }).organizationId,
     };
-    if (ms > 200) {
-      request.log.warn(logPayload, "slow response");
+    if (ms > 2_000) {
+      request.log.error({ ...logPayload, slow_request: true }, "very_slow_response");
+    } else if (ms > 500) {
+      request.log.warn({ ...logPayload, slow_request: true }, "slow_response");
     } else {
       request.log.info(logPayload, "response");
     }
@@ -146,6 +149,16 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     request.log.error({ error: error.message, requestId: request.id }, "Unhandled error");
+    // Track error rate — emit structured log field so Loki/Grafana can count 5xx per route
+    request.log.error(
+      {
+        error_rate_event: true,
+        route: request.routeOptions?.url ?? request.url,
+        method: request.method,
+        requestId: request.id,
+      },
+      "error_rate_event",
+    );
     void reply.status(500).send({
       success: false,
       error: "Internal server error",
@@ -181,9 +194,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   if (shouldStartWorkers()) {
     const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
     const { adminRetryIntentsRoutes } = await import("./modules/admin/retry-intents.routes.js");
+    const { systemHealthRoutes } = await import("./modules/admin/system-health.routes.js");
     await app.register(adminQueuesRoutes);
     await app.register(adminRetryIntentsRoutes);
+    await app.register(systemHealthRoutes);
   }
+
+  // Admin audit log — not worker-gated (pure DB, no Redis required).
+  const { auditLogRoutes } = await import("./modules/admin/audit-log.routes.js");
+  await app.register(auditLogRoutes);
 
   // NOTE: Workers and startup recovery are intentionally started in server.ts
   // after app.listen() resolves. This keeps lifecycle explicit and prevents

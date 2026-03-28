@@ -1,7 +1,7 @@
 import "./tracing.js";
 import { env, getConfigHash, getEnv, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
-import { shouldStartWorkers } from "./workers/startup.js";
+import { shouldStartWorkers, getExpectedWorkerCount } from "./workers/startup.js";
 
 async function start(): Promise<void> {
   // Force environment validation at process startup so production fails fast.
@@ -54,10 +54,21 @@ async function start(): Promise<void> {
       const { startRetryIntentCleanupJob } = await import("./workers/retry-cleanup.job.js");
 
       await startWorkers(app);
-      app.log.info({ activeWorkers: 2 }, "[BOOT] workers started");
+      app.log.info({ activeWorkers: getExpectedWorkerCount() }, "[BOOT] workers started");
       performStartupRecovery(app);
       void replayPendingRetryIntents(app);
       startRetryIntentCleanupJob(app);
+
+      // Restore any open circuit-breaker states from DB into Redis so that
+      // delivery workers respect open circuits after a Redis flush/restart.
+      const { syncCircuitBreakerState } = await import("./workers/circuit-breaker.js");
+      const { getRedisConnectionOptions } = await import("./config/redis.js");
+      const { Redis } = await import("ioredis");
+      const cbSyncRedis = new Redis(getRedisConnectionOptions());
+      cbSyncRedis.on("error", () => { /* non-fatal */ });
+      void syncCircuitBreakerState(cbSyncRedis, app.log).finally(() => {
+        void cbSyncRedis.quit().catch(() => undefined);
+      });
     } else {
       app.log.info(
         {

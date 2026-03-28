@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { CookieOptions } from "@supabase/ssr";
+import { extractRoleFromSession } from "@/lib/auth/role";
 
 /**
  * Auth + role middleware.
@@ -13,7 +14,7 @@ import type { CookieOptions } from "@supabase/ssr";
  *   /login, /_next/*, /favicon.ico, static assets
  *
  * Role-protected routes:
- *   /admin/** → requires role = "ADMIN" in user_metadata
+ *   /admin/** → requires role = "ADMIN" in JWT claims
  */
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next({
@@ -51,11 +52,20 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  // Let proxied API requests pass through untouched so the backend can return
+  // proper JSON errors (401/403/etc.) instead of this middleware redirecting
+  // fetches to the HTML login page.
+  if (pathname.startsWith("/api/proxy")) {
+    return response;
+  }
+
   // Already on the login page — don't redirect in a loop
   if (pathname.startsWith("/login")) {
-    // If user is already authenticated, send them to the right landing page
+    // If user is already authenticated, send them to their correct landing page
     if (session) {
-      return NextResponse.redirect(new URL("/sessions", request.url));
+      const role = extractRoleFromSession(session, { allowUserMetadataFallback: false });
+      const landing = role === "ADMIN" ? "/admin/sessions" : "/sessions";
+      return NextResponse.redirect(new URL(landing, request.url));
     }
     return response;
   }
@@ -68,11 +78,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // Role-based protection for /admin routes.
-  // The role is embedded in app_metadata by the custom_access_token_hook, which reads
-  // the authoritative value from public.users.role (server-controlled).
-  // user_metadata is user-editable and MUST NOT be used for authorization decisions.
+  // Use JWT/app_metadata-derived claims only; avoid user_metadata for authz.
   if (pathname.startsWith("/admin")) {
-    const role = (session.user?.app_metadata as Record<string, unknown> | undefined)?.role as string | undefined;
+    const role = extractRoleFromSession(session, { allowUserMetadataFallback: false });
     if (role !== "ADMIN") {
       // Redirect employees and unknown roles away from admin pages.
       return NextResponse.redirect(new URL("/sessions", request.url));
@@ -86,11 +94,12 @@ export const config = {
   matcher: [
     /*
      * Match all paths EXCEPT:
+     *  - api/proxy      (proxied backend API; backend handles auth/errors)
      *  - _next/static  (static files)
      *  - _next/image   (image optimisation)
      *  - favicon.ico
      *  - public assets (png, jpg, svg, etc.)
      */
-    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|otf|css|js)).*)",
+    "/((?!api/proxy|_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|otf|css|js)).*)",
   ],
 };

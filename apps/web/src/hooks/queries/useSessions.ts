@@ -14,6 +14,8 @@ export function useMySessions(page: number, limit: number) {
         page: String(page),
         limit: String(limit),
       }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -25,6 +27,8 @@ export function useOrgSessions(page: number, limit: number) {
         page: String(page),
         limit: String(limit),
       }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -42,7 +46,8 @@ export function useAllOrgSessions() {
     queryFn: ({ pageParam }) =>
       apiGetPaginated<AttendanceSession>(API.adminSessions, {
         page: String(pageParam),
-        limit: "1000",
+        // Backend validates limit <= 100 for /admin/sessions.
+        limit: "100",
       }),
     staleTime: 60_000,
     placeholderData: keepPreviousData,

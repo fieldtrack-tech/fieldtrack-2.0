@@ -29,7 +29,9 @@ function nextRetryIso(retryCount: number): string {
     RETRY_MAX_DELAY_SECONDS,
     RETRY_BASE_DELAY_SECONDS * (2 ** Math.max(0, retryCount - 1)),
   );
-  return new Date(Date.now() + backoffSeconds * 1000).toISOString();
+  // Add 0–20% jitter to prevent thundering-herd when many intents retry at once.
+  const jitterSeconds = backoffSeconds * 0.2 * Math.random();
+  return new Date(Date.now() + (backoffSeconds + jitterSeconds) * 1000).toISOString();
 }
 
 export async function persistRetryIntent(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiGet, apiGetPaginated, apiPost, apiPatch } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
 import type { PaginatedResponse } from "@/types";
@@ -33,6 +33,8 @@ export function useEmployeeList(
       if (filters?.search) params["search"] = filters.search;
       return apiGetPaginated<EmployeeRecord>(API.listEmployees, params);
     },
+    staleTime: 120_000,      // employee roster: fresh for 2 min
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -41,6 +43,7 @@ export function useEmployee(id: string | null) {
     queryKey: ["employee", id],
     enabled: id !== null,
     queryFn: () => apiGet<EmployeeRecord>(API.getEmployee(id!)),
+    staleTime: 120_000,
   });
 }
 

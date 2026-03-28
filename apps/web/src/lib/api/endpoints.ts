@@ -60,4 +60,14 @@ export const API = {
   adminEvents: "/admin/events",
   /** GPS playback points for a specific session. */
   sessionLocations: (id: string) => `/admin/sessions/${id}/locations`,
+
+  // Webhooks
+  /** List all registered webhooks for the org (secrets omitted). */
+  webhooks: "/admin/webhooks",
+  /** Create / update / delete a webhook (/:id for PATCH+DELETE). */
+  webhookById: (id: string) => `/admin/webhooks/${id}`,
+  /** Paginated delivery attempts. */
+  webhookDeliveries: "/admin/webhook-deliveries",
+  /** Retry a specific delivery. */
+  retryDelivery: (id: string) => `/admin/webhook-deliveries/${id}/retry`,
 } as const;

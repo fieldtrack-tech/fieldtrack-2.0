@@ -62,6 +62,13 @@ export class QueueOverloadedError extends AppError {
     }
 }
 
+export class ServiceUnavailableError extends AppError {
+    constructor(message = "Service unavailable") {
+        super(message, 503, "SERVICE_UNAVAILABLE");
+        this.name = "ServiceUnavailableError";
+    }
+}
+
 // ─── Domain-specific errors ───────────────────────────────────────────────────
 
 export class EmployeeAlreadyCheckedIn extends BadRequestError {

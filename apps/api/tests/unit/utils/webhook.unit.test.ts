@@ -12,7 +12,15 @@
  * graph can be wired up without vi.doMock / vi.resetModules complications.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Mock Redis and BullMQ queue creation so importing webhook.queue.ts does not
+// attempt a real TCP connection to redis://localhost:6379 in unit-test context.
+vi.mock("../../../src/config/redis.js", () => ({
+  redisClient:             { on: vi.fn(), quit: vi.fn(), disconnect: vi.fn() },
+  getRedisConnectionOptions: vi.fn().mockReturnValue({ host: "localhost", port: 6379 }),
+  redisConnectionOptions:  { host: "localhost", port: 6379 },
+}));
 
 // ─── hmac.ts ─────────────────────────────────────────────────────────────────
 
@@ -43,6 +51,18 @@ describe("generateSignature", () => {
   });
 });
 
+describe("generateSignatureWithTimestamp", () => {
+  it("should sign timestamp.payload and return timestamp", async () => {
+    const { generateSignature, generateSignatureWithTimestamp } = await import("../../../src/utils/hmac.js");
+    const payload = JSON.stringify({ id: "evt_123" });
+    const ts = 1_700_000_000;
+    const { signature, timestamp } = generateSignatureWithTimestamp("secret", payload, ts);
+
+    expect(timestamp).toBe(ts);
+    expect(signature).toBe(generateSignature("secret", `${ts}.${payload}`));
+  });
+});
+
 describe("verifySignature", () => {
   it("should return true for a correctly generated signature", async () => {
     const { generateSignature, verifySignature } = await import("../../../src/utils/hmac.js");
@@ -69,6 +89,34 @@ describe("verifySignature", () => {
   it("should return false for length-differing strings without crashing", async () => {
     const { verifySignature } = await import("../../../src/utils/hmac.js");
     expect(verifySignature("s", "p", "sha256=short")).toBe(false);
+  });
+});
+
+describe("verifySignatureWithTimestamp", () => {
+  it("returns true for valid signature inside tolerance", async () => {
+    const { generateSignatureWithTimestamp, verifySignatureWithTimestamp } = await import(
+      "../../../src/utils/hmac.js"
+    );
+    const payload = JSON.stringify({ type: "expense.created" });
+    const now = 1_700_000_000;
+    const { signature, timestamp } = generateSignatureWithTimestamp("secret", payload, now - 60);
+
+    expect(
+      verifySignatureWithTimestamp("secret", payload, signature, timestamp, now, 300),
+    ).toBe(true);
+  });
+
+  it("returns false when timestamp is outside tolerance", async () => {
+    const { generateSignatureWithTimestamp, verifySignatureWithTimestamp } = await import(
+      "../../../src/utils/hmac.js"
+    );
+    const payload = JSON.stringify({ type: "expense.created" });
+    const now = 1_700_000_000;
+    const { signature, timestamp } = generateSignatureWithTimestamp("secret", payload, now - 400);
+
+    expect(
+      verifySignatureWithTimestamp("secret", payload, signature, timestamp, now, 300),
+    ).toBe(false);
   });
 });
 
@@ -124,11 +172,29 @@ describe("WEBHOOK_RETRY_DELAYS_MS", () => {
     );
     expect(WEBHOOK_MAX_ATTEMPTS).toBe(5);
     expect(WEBHOOK_RETRY_DELAYS_MS).toHaveLength(5);
-    expect(WEBHOOK_RETRY_DELAYS_MS[0]).toBe(0);          // attempt 1 immediate
-    expect(WEBHOOK_RETRY_DELAYS_MS[1]).toBe(30_000);     // attempt 2 → 30 s
-    expect(WEBHOOK_RETRY_DELAYS_MS[2]).toBe(120_000);    // attempt 3 → 2 min
-    expect(WEBHOOK_RETRY_DELAYS_MS[3]).toBe(600_000);    // attempt 4 → 10 min
-    expect(WEBHOOK_RETRY_DELAYS_MS[4]).toBe(3_600_000);  // attempt 5 → 1 h
+    expect(WEBHOOK_RETRY_DELAYS_MS[0]).toBe(0);           // attempt 1 immediate
+    expect(WEBHOOK_RETRY_DELAYS_MS[1]).toBe(60_000);      // attempt 2 → 1 min
+    expect(WEBHOOK_RETRY_DELAYS_MS[2]).toBe(300_000);     // attempt 3 → 5 min
+    expect(WEBHOOK_RETRY_DELAYS_MS[3]).toBe(900_000);     // attempt 4 → 15 min
+    expect(WEBHOOK_RETRY_DELAYS_MS[4]).toBe(3_600_000);   // attempt 5 → 1 h
+  });
+});
+
+describe("calculateRetryDelay", () => {
+  it("should never return less than base delay", async () => {
+    const { calculateRetryDelay, WEBHOOK_RETRY_DELAYS_MS } = await import(
+      "../../../src/workers/webhook.queue.js"
+    );
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    expect(calculateRetryDelay(2)).toBe(WEBHOOK_RETRY_DELAYS_MS[1]);
+    vi.restoreAllMocks();
+  });
+
+  it("should cap jitter at +20% when Math.random() is 1", async () => {
+    const { calculateRetryDelay } = await import("../../../src/workers/webhook.queue.js");
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    expect(calculateRetryDelay(2)).toBe(72_000); // 60_000 + 20%
+    vi.restoreAllMocks();
   });
 });
 

@@ -226,6 +226,13 @@ export const distanceJobsTotal = new client.Counter({
  * millions).  Each org generates at most O(event_types × statuses) = ~15 series.
  * Do NOT add high-cardinality labels such as event_id or webhook_id.
  *
+ * IMPORTANT: `event_type` MUST be sanitised through `normalizeEventType()`
+ * (defined in webhook.worker.ts) before being used as a label value.
+ * Raw values from the DB payload could be arbitrary strings, creating
+ * unbounded cardinality.  `normalizeEventType()` maps unknown values to
+ * `"other"`.  Update KNOWN_EVENT_TYPES whenever a new EventDataMap key is
+ * added to event-bus.ts.
+ *
  * Not yet wired to the delivery worker — defined here so the metric is
  * registered in the same process-level registry as all other metrics and
  * appears in /metrics output from day one (with zero counters until Phase 25
@@ -239,7 +246,7 @@ export const distanceJobsTotal = new client.Counter({
 export const webhookDeliveriesTotal = new client.Counter({
   name: "webhook_deliveries_total",
   help: "Total number of webhook delivery attempts",
-  labelNames: ["event_type", "status", "organization_id"] as const,
+  labelNames: ["event_type", "status"] as const,
   registers: [register],
 });
 
@@ -260,7 +267,23 @@ export const webhookDeliveriesTotal = new client.Counter({
 export const webhookFailuresTotal = new client.Counter({
   name: "webhook_failures_total",
   help: "Total number of webhook deliveries that permanently failed after all retries",
-  labelNames: ["event_type", "organization_id"] as const,
+  labelNames: ["event_type"] as const,
+  registers: [register],
+});
+
+/**
+ * Total webhook delivery retries scheduled.
+ * Incremented each time a failed attempt is re-queued (attempt 2..MAX).
+ *
+ * Usage in the delivery worker:
+ *   webhookRetriesTotal
+ *     .labels({ event_type: "my.event", organization_id: orgId })
+ *     .inc();
+ */
+export const webhookRetriesTotal = new client.Counter({
+  name: "webhook_retries_total",
+  help: "Total number of webhook delivery retries scheduled",
+  labelNames: ["event_type"] as const,
   registers: [register],
 });
 

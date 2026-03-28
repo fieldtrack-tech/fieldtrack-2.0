@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 
+const isDev = process.env.NODE_ENV === 'development';
+
 // NEXT_PUBLIC_API_BASE_URL controls how the browser reaches the backend.
 //
 // Mode A — Direct (recommended for Vercel):
@@ -47,6 +49,7 @@ const nextConfig = {
       "https://*.tiles.mapbox.com", // Mapbox raster / vector tiles
       "https://api.mapbox.com",     // Mapbox geocoding, directions, styles
       "https://events.mapbox.com",  // Mapbox telemetry
+      "https://*.tile.openstreetmap.org", // Leaflet / OpenStreetMap tiles
     ];
     // Only add the API origin when it is a full URL — same-origin requests
     // (/api/proxy path) are already covered by 'self' above.
@@ -67,7 +70,9 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              // In development, Next.js Fast Refresh (HMR) requires 'unsafe-eval'.
+              // Without it the React event system breaks and forms submit natively.
+              isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self' 'unsafe-inline'",
               "style-src 'self' 'unsafe-inline'",
               // blob: required for Mapbox GL sprite / image atlas
               "img-src 'self' data: blob: https:",

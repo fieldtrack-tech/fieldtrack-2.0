@@ -525,6 +525,138 @@
                     "refId": "B"
                 }
             ]
+        },
+        {
+            "title": "API Error Budget Remaining (30d)",
+            "type": "stat",
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 36
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.5
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.9
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "fieldtrack:api_error_budget_remaining_30d",
+                    "legendFormat": "Remaining",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "API Error Burn Rate (1h / 6h)",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 36
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 15,
+                        "lineWidth": 2
+                    },
+                    "unit": "percentunit"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "fieldtrack:api_error_rate_1h",
+                    "legendFormat": "1h",
+                    "refId": "A"
+                },
+                {
+                    "expr": "fieldtrack:api_error_rate_6h",
+                    "legendFormat": "6h",
+                    "refId": "B"
+                }
+            ]
+        },
+        {
+            "title": "Webhook Permanent Failure Rate (5m)",
+            "type": "stat",
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 36
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.1
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.3
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "fieldtrack:webhook_failure_rate_5m",
+                    "legendFormat": "Failure Rate",
+                    "refId": "A"
+                }
+            ]
         }
     ],
     "schemaVersion": 39,
@@ -544,5 +676,5 @@
     "timezone": "browser",
     "title": "FieldTrack 2.0 — Backend & System",
     "uid": "fieldtrack-backend",
-    "version": 1
+    "version": 2
 }

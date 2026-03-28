@@ -71,6 +71,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+          cache-dependency-path: '**/package-lock.json'
 
       - run: npm ci
         if: needs.detect-changes.outputs.backend == 'true'
@@ -94,6 +95,7 @@ jobs:
         if: needs.detect-changes.outputs.backend == 'true'
         run: |
           docker build \
+            --target production \
             -t fieldtrack-backend:ci-validation \
             -f apps/api/Dockerfile \
             .
@@ -110,14 +112,30 @@ jobs:
             -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }} \
             fieldtrack-backend:ci-validation
 
-          sleep 3
+          STATUS="000"
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/health || echo "000")
+            if [ "$STATUS" = "200" ]; then break; fi
+            echo "Health check attempt $i: HTTP $STATUS — waiting..."
+            sleep 2
+          done
 
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/health || echo "000")
           if [ "$STATUS" != "200" ]; then
-            echo "❌ /health returned HTTP $STATUS (expected 200)"
+            echo "❌ /health returned HTTP $STATUS after 24 s (expected 200)"
             docker logs fieldtrack-ci-test --tail 50
             exit 1
           fi
+
+          # Smoke tests: admin endpoints must reject unauthenticated requests with 401
+          for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
+            ECODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3001${ENDPOINT}" || echo "000")
+            if [ "$ECODE" != "401" ]; then
+              echo "❌ ${ENDPOINT} expected 401 (unauthenticated), got ${ECODE}"
+              docker logs fieldtrack-ci-test --tail 50
+              exit 1
+            fi
+            echo "✓ ${ENDPOINT} → 401 (auth guard verified)"
+          done
 
           docker rm -f fieldtrack-ci-test
           docker rmi fieldtrack-backend:ci-validation
@@ -163,6 +181,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+          cache-dependency-path: '**/package-lock.json'
 
       - run: npm ci
         if: needs.detect-changes.outputs.frontend == 'true'
