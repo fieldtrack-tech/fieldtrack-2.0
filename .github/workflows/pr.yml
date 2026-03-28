@@ -91,10 +91,17 @@ jobs:
         working-directory: apps/api
         run: npx vitest run tests/integration/
 
+      - name: Pull base images (force fresh manifest, prevent stale GHA cache)
+        if: needs.detect-changes.outputs.backend == 'true'
+        run: |
+          docker pull node:24.2.0-bookworm-slim
+          docker pull gcr.io/distroless/nodejs24-debian12:nonroot
+
       - name: Build and validate container
         if: needs.detect-changes.outputs.backend == 'true'
         run: |
           docker build \
+            --pull \
             --target production \
             --build-arg CACHE_BUSTER=${{ hashFiles('**/package-lock.json') }} \
             --cache-from=type=gha,scope=pr \
