@@ -15,12 +15,10 @@
 
 # ---- Stage 1: Build --------------------------------------------------------
 # Pinned to specific version to prevent supply chain attacks.
-# NOTE: To pin by digest and prevent base image drift:
-#   1. Run: docker pull node:24.2.0-bookworm-slim
-#   2. Run: docker inspect node:24.2.0-bookworm-slim | grep RepoDigests
-#   3. Replace node:24.2.0-bookworm-slim with node:24.2.0-bookworm-slim@sha256:DIGEST
-# This ensures identical binaries even if the tag is re-released.
-FROM node:24.2.0-bookworm-slim AS builder
+# Digest pinned to linux/amd64 manifest (resolved 2026-03-28).
+# To rotate: docker manifest inspect node:24.2.0-bookworm-slim
+#   and replace the sha256 below with the current amd64 digest.
+FROM node:24.2.0-bookworm-slim@sha256:1a6a7b2e2e2c80a6973f57aa8b0c6ad67a961ddbc5ef326c448e133f93564ff9 AS builder
 
 # Cache buster: force rebuild when package-lock.json changes.
 # Prevents stale dependency layers from being reused on deployment.
@@ -50,8 +48,8 @@ RUN npm run build
 # Separate stage: installs --omit=dev so distroless never needs npm or a shell.
 # mkdir -p guards ensure workspace subdirectories always exist for the COPY in
 # stage 3, even when npm hoists all deps to the root node_modules.
-# NOTE: Must use SAME base image tag as Stage 1 to ensure consistency.
-FROM node:24.2.0-bookworm-slim AS runtime-deps
+# NOTE: Must use SAME base image digest as Stage 1 to ensure consistency.
+FROM node:24.2.0-bookworm-slim@sha256:1a6a7b2e2e2c80a6973f57aa8b0c6ad67a961ddbc5ef326c448e133f93564ff9 AS runtime-deps
 
 # Cache buster: force rebuild when package-lock.json changes.
 ARG CACHE_BUSTER=1
@@ -76,13 +74,11 @@ RUN npm ci \
 #   • Minimal glibc + libssl from Debian 12
 #   • No shell, no package manager, no OS utilities
 # Trivy finds near-zero OS CVEs in this image.
-# NOTE: To pin by digest and prevent base image drift:
-#   1. Run: docker pull gcr.io/distroless/nodejs24-debian12:nonroot
-#   2. Run: docker inspect gcr.io/distroless/nodejs24-debian12:nonroot | grep RepoDigests
-#   3. Replace tag with @sha256:DIGEST in FROM statement
-# This prevents "same Dockerfile → different result" risks.
+# Digest pinned to linux/amd64 manifest (resolved 2026-03-28).
+# To rotate: docker manifest inspect gcr.io/distroless/nodejs24-debian12:nonroot
+#   and replace the sha256 below with the current amd64 digest.
 # ENTRYPOINT is ["/nodejs/bin/node"]; CMD supplies the script path argument.
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS production
+FROM gcr.io/distroless/nodejs24-debian12:nonroot@sha256:6c75c6e4771c2ea5f02aaf991abdc77391acd3a580accd9d7b68651f12c60dc0 AS production
 
 WORKDIR /app
 

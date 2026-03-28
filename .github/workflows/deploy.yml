@@ -230,6 +230,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Pull base images (force fresh manifest, prevent stale GHA cache)
+        run: |
+          docker pull node:24.2.0-bookworm-slim
+          docker pull gcr.io/distroless/nodejs24-debian12:nonroot
+
       # Phase 1: Build into local Docker daemon for scanning.
       # EXACT same parameters as pr.yml production-simulation:
       #   target: production, build-args: NODE_ENV=production, GHA cache.
@@ -246,29 +251,30 @@ jobs:
             CACHE_BUSTER=${{ hashFiles('**/package-lock.json') }}
           push: false
           load: true
+          pull: true
           tags: |
             fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
           cache-from: type=gha,scope=production
           cache-to: type=gha,mode=max,scope=production
 
-      # Verify Node.js runtime crypto via OpenSSL binding in PRODUCTION stage.
-      # Confirms the Node runtime has OpenSSL linked (critical for TLS/HTTPS).
-      # Uses --entrypoint to bypass the distroless ENTRYPOINT.
-      - name: Verify Node.js runtime crypto
+      # Verify Node.js runtime — exercises TLS stack, not just compile-time version constant.
+      # tls.createSecureContext() fails if libssl linkage is broken, proving runtime health.
+      - name: Verify Node.js runtime (TLS operational check)
         run: |
           IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
           echo "Testing image: $IMAGE_NAME"
-          
-          # Override ENTRYPOINT to run node directly (distroless sets ENTRYPOINT ["/nodejs/bin/node"])
-          echo "Verifying Node.js OpenSSL binding..."
-          docker run --rm --entrypoint /nodejs/bin/node "$IMAGE_NAME" -e "
-            const openssl = process.versions.openssl;
-            if (!openssl) {
-              console.error('ERROR: OpenSSL not linked to Node.js runtime');
-              process.exit(1);
-            }
-            console.log('✓ OpenSSL version:', openssl);
-          "
+          docker run --rm \
+            --entrypoint /nodejs/bin/node \
+            "$IMAGE_NAME" \
+            -e "
+              const crypto = require('crypto');
+              const tls = require('tls');
+              const ctx = tls.createSecureContext();
+              if (!ctx) { process.stderr.write('FAIL: TLS context failed\n'); process.exit(1); }
+              const h = crypto.createHash('sha256').update('smoke').digest('hex');
+              if (!h) { process.stderr.write('FAIL: hash failed\n'); process.exit(1); }
+              process.stdout.write('node=' + process.versions.node + ' openssl=' + process.versions.openssl + ' tls=ok\n');
+            "
 
       # Capture the content-addressable image digest.
       # With cache scoping and cache busting, digest should always reproduce correctly.
@@ -348,11 +354,15 @@ jobs:
       # aquasec/trivy:0.49.1 → sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc
       # Identical severity gates to pr.yml (HIGH,CRITICAL / exit-code 1).
       # Two-phase: DB downloaded first (needs network), then scan runs --network none.
-      - name: Cache Trivy DB
+      - name: Get date for Trivy DB cache key
+        id: trivy-date
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Trivy DB (daily refresh)
         uses: actions/cache@v4
         with:
           path: /tmp/trivy-cache
-          key: trivy-db-${{ runner.os }}-v1
+          key: trivy-db-${{ runner.os }}-${{ steps.trivy-date.outputs.date }}
           restore-keys: |
             trivy-db-${{ runner.os }}-
 
@@ -363,7 +373,7 @@ jobs:
             aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
             image --download-db-only
 
-      - name: Scan image with Trivy (HIGH/CRITICAL, ignore-unfixed, air-gapped)
+      - name: Scan image with Trivy (HIGH/CRITICAL, ignore-unfixed)
         env:
           IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
         run: |
@@ -390,6 +400,37 @@ jobs:
           if [ "$SCAN_PASSED" != "true" ]; then
             echo "::error::Trivy scan failed after 3 attempts — HIGH/CRITICAL vulnerabilities found or scan error."
             exit 1
+          fi
+          echo "✓ Trivy scan passed (HIGH/CRITICAL, ignore-unfixed)"
+
+      - name: Scan for unfixed CRITICAL vulnerabilities (informational)
+        continue-on-error: true
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+        run: |
+          UNFIXED_COUNT=$(docker run --rm \
+            --network none \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp/trivy-cache:/root/.cache \
+            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
+              --skip-db-update \
+              --severity CRITICAL \
+              --format json \
+              "$IMAGE_NAME" | jq '[.Results[]?.Misconfigurations[]? // .Results[]?.Vulnerabilities[]? | select(.FixedVersion == null or .FixedVersion == "")] | length')
+          
+          if [ "$UNFIXED_COUNT" -gt 0 ]; then
+            echo "⚠ WARNING: $UNFIXED_COUNT unfixed CRITICAL vulnerabilities found"
+            echo "  (No patches available upstream — waiting for vendor fix)"
+            docker run --rm \
+              --network none \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /tmp/trivy-cache:/root/.cache \
+              aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
+                --skip-db-update \
+                --severity CRITICAL \
+                "$IMAGE_NAME" >> /tmp/unfixed-critical.log || true
+          else
+            echo "✓ No unfixed CRITICAL vulnerabilities"
           fi
 
       # Phase 3: Scan passed — push the exact scanned image (same layer digests).
@@ -424,11 +465,7 @@ jobs:
           docker tag \
             fieldtrack-backend:${{ steps.meta.outputs.sha_short }} \
             ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
-          docker tag \
-            fieldtrack-backend:${{ steps.meta.outputs.sha_short }} \
-            ghcr.io/${OWNER}/fieldtrack-backend:latest
           docker push ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
-          docker push ghcr.io/${OWNER}/fieldtrack-backend:latest
           echo "✓ Pushed ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
 
       # Use the same pinned Trivy image to generate the SBOM — no additional
