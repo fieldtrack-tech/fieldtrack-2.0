@@ -1,17 +1,15 @@
-# Root .dockerignore — used when Docker build context is the repo root
+# Root .dockerignore — build context is the repo root
 
 # Version control
 .git
 .gitignore
 
-# All node_modules (each app installs its own in Docker)
+# All node_modules (Docker installs fresh)
 node_modules
-apps/*/node_modules
-packages/*/node_modules
 
 # Build artefacts (Docker regenerates these)
-apps/api/dist
-packages/*/dist
+dist
+*.tsbuildinfo
 
 # Environment files
 .env
@@ -30,6 +28,10 @@ docs
 *.md
 .github
 
-# Infra and scripts not needed in image
+# Infra, supabase and other repo artefacts
 infra
 supabase
+codeql-db
+results
+apps
+packages

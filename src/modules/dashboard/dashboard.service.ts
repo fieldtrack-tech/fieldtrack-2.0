@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { orgTable } from "../../db/query.js";
-import type { DashboardSummary } from "@fieldtrack/types";
+import type { DashboardSummary } from "../../types/shared.js";
 
 /**
  * Returns the ISO date string for the Monday of the current UTC week (YYYY-MM-DD).

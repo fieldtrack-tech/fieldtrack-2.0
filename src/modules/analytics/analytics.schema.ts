@@ -136,15 +136,15 @@ export const leaderboardResponseSchema = z.object({
 });
 
 // ─── Response Data Types ──────────────────────────────────────────────────────
-// Re-exported from @fieldtrack/types — single source of truth shared with the
-// frontend. Add new response shapes to packages/types/src/index.ts instead.
+// Re-exported from src/types/shared.ts — single source of truth for shared types.
+// Add new response shapes to src/types/shared.ts instead.
 export type {
   OrgSummaryData,
   UserSummaryData,
   TopPerformerEntry,
   SessionTrendEntry,
   LeaderboardEntry,
-} from "@fieldtrack/types";
+} from "../../types/shared.js";
 
 // ─── Phase 20: Session Trend ─────────────────────────────────────────────────
 

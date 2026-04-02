@@ -1,7 +1,7 @@
 import { orgTable } from "../../db/query.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import type { FastifyRequest } from "fastify";
-import type { ActivityStatus } from "@fieldtrack/types";
+import type { ActivityStatus } from "../../types/shared.js";
 
 /**
  * Compute activity status from last_activity_at timestamp.

@@ -13,4 +13,4 @@ export const employeeProfileQuerySchema = z.object({
 
 export type EmployeeProfileQuery = z.infer<typeof employeeProfileQuerySchema>;
 
-export type { EmployeeProfileData } from "@fieldtrack/types";
+export type { EmployeeProfileData } from "../../types/shared.js";

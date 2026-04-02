@@ -3,7 +3,7 @@ import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
-import type { ActivityStatus, SessionDTO } from "@fieldtrack/types";
+import type { ActivityStatus, SessionDTO } from "../../types/shared.js";
 
 /**
  * Enriched session returned by list queries — re-exported as SessionDTO.

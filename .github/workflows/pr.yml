@@ -29,8 +29,12 @@ jobs:
         with:
           filters: |
             api:
-              - 'apps/api/**'
-              - 'packages/types/**'
+              - 'src/**'
+              - 'tests/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - 'vitest.config.ts'
             infra:
               - 'infra/**'
               - '.github/workflows/**'
@@ -42,7 +46,7 @@ jobs:
     timeout-minutes: 15
     if: always()
     env:
-      # ── CI non-secret defaults (previously in apps/api/.env.ci) ─────────────────
+      # ── CI non-secret defaults ─────────────────────────────────────────────────
       CONFIG_VERSION: "1"
       APP_ENV: ci
       NODE_ENV: production
@@ -96,17 +100,14 @@ jobs:
 
       - run: npm ci
         if: needs.detect-changes.outputs.api == 'true'
-      - run: npm run build -w packages/types
-        if: needs.detect-changes.outputs.api == 'true'
-      - name: TypeScript check (API)
+      - name: TypeScript check
         if: needs.detect-changes.outputs.api == 'true'
         run: npm run typecheck
-        working-directory: apps/api
       - name: Env contract guard (no direct process.env outside env.ts)
         if: needs.detect-changes.outputs.api == 'true'
         run: |
-          if grep -r --include="*.ts" "process\.env" apps/api/src/ \
-               | grep -v "apps/api/src/config/env\.ts"; then
+          if grep -r --include="*.ts" "process\.env" src/ \
+               | grep -v "src/config/env\.ts"; then
             echo "❌ Direct process.env access detected outside env.ts"
             echo "   Use: import { env } from './config/env.js' instead"
             exit 1
@@ -117,7 +118,6 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Tests (unit + integration)
         if: needs.detect-changes.outputs.api == 'true'
-        working-directory: apps/api
         run: npm test
 
       - name: Pull base images (force fresh manifest, prevent stale GHA cache)
@@ -136,7 +136,7 @@ jobs:
             --cache-from=type=gha,scope=pr \
             --cache-to=type=gha,mode=max,scope=pr \
             -t fieldtrack-api:ci-validation \
-            -f apps/api/Dockerfile \
+            -f Dockerfile \
             .
 
       - name: Container bootstrap validation

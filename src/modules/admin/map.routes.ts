@@ -3,7 +3,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
-import type { EmployeeMapMarker } from "@fieldtrack/types";
+import type { EmployeeMapMarker } from "../../types/shared.js";
 
 /** Hard safety cap — prevents map from crashing if the org scales rapidly. */
 const MAX_MAP_EMPLOYEES = 1000;

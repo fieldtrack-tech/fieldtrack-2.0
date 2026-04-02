@@ -1,4 +1,4 @@
-# Build context: repo root (docker build -f apps/api/Dockerfile .)
+# Build context: repo root (docker build -f Dockerfile .)
 #
 # Three-stage build:
 #   1. builder      — compiles TypeScript (full devDependencies available)
@@ -21,34 +21,22 @@
 FROM node:24.2.0-bookworm-slim@sha256:1a6a7b2e2e2c80a6973f57aa8b0c6ad67a961ddbc5ef326c448e133f93564ff9 AS builder
 
 # Cache buster: force rebuild when package-lock.json changes.
-# Prevents stale dependency layers from being reused on deployment.
 ARG CACHE_BUSTER=1
 
 WORKDIR /workspace
 
 # Copy package manifests first for layer-cached dependency install.
 COPY package.json package-lock.json ./
-COPY apps/api/package.json ./apps/api/
-COPY packages/types/package.json ./packages/types/
 
-RUN npm ci --workspace apps/api --workspace packages/types --include-workspace-root=false
-
-# Compile shared types first (apps/api depends on @fieldtrack/types at runtime).
-COPY packages/types/tsconfig.json ./packages/types/
-COPY packages/types/src/ ./packages/types/src/
-RUN npm run build -w packages/types
+RUN npm ci
 
 # Compile API.
-WORKDIR /workspace/apps/api
-COPY apps/api/tsconfig.json ./
-COPY apps/api/src ./src
+COPY tsconfig.json ./
+COPY src ./src
 RUN npm run build
 
 # ---- Stage 2: Production dependencies -------------------------------------
 # Separate stage: installs --omit=dev so distroless never needs npm or a shell.
-# mkdir -p guards ensure workspace subdirectories always exist for the COPY in
-# stage 3, even when npm hoists all deps to the root node_modules.
-# NOTE: Must use SAME base image digest as Stage 1 to ensure consistency.
 FROM node:24.2.0-bookworm-slim@sha256:1a6a7b2e2e2c80a6973f57aa8b0c6ad67a961ddbc5ef326c448e133f93564ff9 AS runtime-deps
 
 # Cache buster: force rebuild when package-lock.json changes.
@@ -57,15 +45,8 @@ ARG CACHE_BUSTER=1
 WORKDIR /workspace
 
 COPY package.json package-lock.json ./
-COPY apps/api/package.json ./apps/api/
-COPY packages/types/package.json ./packages/types/
 
-RUN npm ci \
-      --omit=dev \
-      --workspace apps/api \
-      --workspace packages/types \
-      --include-workspace-root=false \
-  && mkdir -p apps/api/node_modules packages/types/node_modules \
+RUN npm ci --omit=dev \
   && npm cache clean --force
 
 # ---- Stage 3: Production (distroless) -------------------------------------
@@ -84,25 +65,17 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Package manifests — required for npm workspace module resolution at runtime.
-# The @fieldtrack/types symlink in node_modules points to ../../packages/types;
-# Node.js resolves it to /app/packages/types which is present below.
+# Package manifest — required for Node.js module resolution at runtime.
 COPY package.json ./
-COPY apps/api/package.json ./apps/api/
-COPY packages/types/package.json ./packages/types/
 
-# Production node_modules (root-hoisted + workspace-specific).
-# BuildKit COPY preserves symlinks, so workspace links resolve correctly.
-COPY --from=runtime-deps /workspace/node_modules            ./node_modules
-COPY --from=runtime-deps /workspace/apps/api/node_modules   ./apps/api/node_modules
-COPY --from=runtime-deps /workspace/packages/types/node_modules ./packages/types/node_modules
+# Production node_modules.
+COPY --from=runtime-deps /workspace/node_modules ./node_modules
 
 # Compiled application output.
-COPY --from=builder /workspace/apps/api/dist             ./apps/api/dist
-COPY --from=builder /workspace/packages/types/dist       ./packages/types/dist
+COPY --from=builder /workspace/dist ./dist
 
 # Healthcheck script — uses Node built-in http (curl not available in distroless).
-COPY apps/api/healthcheck.js ./healthcheck.js
+COPY healthcheck.js ./healthcheck.js
 
 EXPOSE 3000
 
@@ -110,4 +83,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/nodejs/bin/node", "/app/healthcheck.js"]
 
-CMD ["apps/api/dist/server.js"]
+CMD ["dist/server.js"]

@@ -1,7 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import { profileRepository, computeActivityStatusFromTimestamp } from "./profile.repository.js";
 import { NotFoundError, ForbiddenError } from "../../utils/errors.js";
-import type { EmployeeProfileData } from "@fieldtrack/types";
+import type { EmployeeProfileData } from "../../types/shared.js";
 
 export const profileService = {
   /**

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { EmployeeProfileData } from "@fieldtrack/types";
+import type { EmployeeProfileData } from "../../types/shared.js";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { profileController } from "./profile.controller.js";

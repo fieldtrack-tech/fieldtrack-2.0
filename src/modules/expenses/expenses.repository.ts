@@ -3,7 +3,7 @@ import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { Expense, ExpenseStatus, CreateExpenseBody } from "./expenses.schema.js";
-import type { EmployeeExpenseSummary } from "@fieldtrack/types";
+import type { EmployeeExpenseSummary } from "../../types/shared.js";
 
 /** Enriched expense returned by list queries — adds employee code and name. */
 export type EnrichedExpense = Expense & {

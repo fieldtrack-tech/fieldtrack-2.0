@@ -5,7 +5,7 @@ import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import { ok, handleError } from "../../utils/response.js";
 import { analyticsService } from "../analytics/analytics.service.js";
 import { getCached } from "../../utils/cache.js";
-import type { AdminDashboardData } from "@fieldtrack/types";
+import type { AdminDashboardData } from "../../types/shared.js";
 
 // Phase 24: Simplified TTL — the snapshot is always current within a worker
 // cycle (~seconds), so Redis just absorbs repeated polling load.

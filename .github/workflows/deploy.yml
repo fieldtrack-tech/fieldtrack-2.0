@@ -66,7 +66,7 @@ jobs:
           cache: npm
           cache-dependency-path: '**/package-lock.json'
 
-      - name: Install workspace dependencies (with retry)
+      - name: Install dependencies (with retry)
         run: |
           echo "::group::npm ci"
           for attempt in 1 2 3; do
@@ -77,20 +77,16 @@ jobs:
           done
           echo "::endgroup::"
 
-      - name: Build shared types
-        run: npm run build -w packages/types
-
       - name: Dependency vulnerability scan
         run: npm audit --omit=dev --audit-level=high
 
-      - name: TypeScript check (API)
-        working-directory: apps/api
-        run: npx tsc --noEmit
+      - name: TypeScript check
+        run: npm run typecheck
 
       - name: Env contract guard (no direct process.env outside env.ts)
         run: |
-          if grep -r --include="*.ts" "process\.env" apps/api/src/ \
-               | grep -v "apps/api/src/config/env\.ts"; then
+          if grep -r --include="*.ts" "process\.env" src/ \
+               | grep -v "src/config/env\.ts"; then
             echo "❌ Direct process.env access detected outside env.ts"
             echo "   Use: import { env } from './config/env.js' instead"
             exit 1
@@ -122,7 +118,7 @@ jobs:
           cache: npm
           cache-dependency-path: '**/package-lock.json'
 
-      - name: Install workspace dependencies (with retry)
+      - name: Install dependencies (with retry)
         run: |
           echo "::group::npm ci"
           for attempt in 1 2 3; do
@@ -134,15 +130,10 @@ jobs:
           echo "::endgroup::"
 
       - name: Build shared types
-        run: npm run build -w packages/types
+        run: echo "No separate types build needed — types are inlined in src/types/shared.ts"
 
-      - name: Unit tests
-        working-directory: apps/api
-        run: npx vitest run tests/unit/
-
-      - name: Integration tests
-        working-directory: apps/api
-        run: npx vitest run tests/integration/
+      - name: Run all tests
+        run: npm test
 
   # ---------------------------------------------------------------------------
   # JOB: build-scan-push
@@ -198,7 +189,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/api/Dockerfile
+          file: ./Dockerfile
           target: production
           build-args: |
             NODE_ENV=production
@@ -541,9 +532,9 @@ jobs:
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
-            chmod +x apps/api/scripts/*.sh
+            chmod +x scripts/*.sh
             echo "=== Pre-deploy environment validation ==="
-            ./apps/api/scripts/validate-env.sh --check-monitoring
+            ./scripts/validate-env.sh --check-monitoring
             echo "✓ Environment contract validated"
 
       - name: Blue-Green deploy via SSH
@@ -557,9 +548,9 @@ jobs:
             T0=$(date +%s)
             export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            chmod +x apps/api/scripts/*.sh
+            chmod +x scripts/*.sh
             # Environment already validated in previous step
-            ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
+            ./scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
       - name: Log deployment state (slot + SHA for debugging)
@@ -609,9 +600,9 @@ jobs:
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
 
-            # Load env from apps/api/.env — exports DEPLOY_ROOT, API_HOSTNAME, and all
+            # Load env from .env — exports DEPLOY_ROOT, API_HOSTNAME, and all
             # app variables. DEPLOY_ROOT is already exported above; load-env.sh uses it.
-            source "$DEPLOY_ROOT/apps/api/scripts/load-env.sh"
+            source "$DEPLOY_ROOT/scripts/load-env.sh"
 
             echo "✓ API_HOSTNAME:    $API_HOSTNAME"
 
@@ -661,7 +652,7 @@ jobs:
             set -euo pipefail
             export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            source apps/api/scripts/load-env.sh
+            source scripts/load-env.sh
             echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 30); do
               echo "---- Attempt $i ----"
@@ -693,7 +684,7 @@ jobs:
             set -euo pipefail
             export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            source apps/api/scripts/load-env.sh
+            source scripts/load-env.sh
             echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 10); do
               echo "---- Attempt $i ----"
@@ -725,8 +716,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          chmod +x apps/api/scripts/smoke-test.sh
-          ./apps/api/scripts/smoke-test.sh
+          chmod +x scripts/smoke-test.sh
+          ./scripts/smoke-test.sh
 
       - name: Upload smoke test report
         if: always()
@@ -785,8 +776,8 @@ jobs:
             set -euo pipefail
             export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            chmod +x apps/api/scripts/*.sh
-            ./apps/api/scripts/rollback.sh --auto
+            chmod +x scripts/*.sh
+            ./scripts/rollback.sh --auto
             
             # Log final state
             ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
