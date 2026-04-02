@@ -6,13 +6,13 @@
 # SELF-SUFFICIENT: sources load-env.sh internally, does NOT depend on caller env.
 #
 # Usage:
-#   bash apps/api/scripts/validate-env.sh
-#   bash apps/api/scripts/validate-env.sh --check-monitoring
+#   bash scripts/validate-env.sh
+#   bash scripts/validate-env.sh --check-monitoring
 #
 # Options:
 #   --check-monitoring        Also validate infra/.env.monitoring and
 #                             cross-check API_HOSTNAME + METRICS_SCRAPE_TOKEN.
-#   --env-file <path>         Override default apps/api/.env path.
+#   --env-file <path>         Override default .env path.
 #   --monitoring-env <path>   Override default infra/.env.monitoring path.
 #
 # ENV CONTRACT:
@@ -20,7 +20,7 @@
 #   INFRA layer → API_HOSTNAME  (hostname only: api.example.com)
 #                 Derived at deploy-time from API_BASE_URL by load-env.sh.
 #                 Set explicitly in infra/.env.monitoring (Docker Compose reads it).
-#                 Must NOT be set in apps/api/.env.
+#                 Must NOT be set in .env.
 #
 # Forbidden variable:
 #   API_DOMAIN  — fully removed; using it is a hard error.
@@ -42,8 +42,8 @@ ERRORS=0
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-API_ENV_FILE="$REPO_ROOT/apps/api/.env"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+API_ENV_FILE="$REPO_ROOT/.env"
 MONITORING_ENV_FILE="$REPO_ROOT/infra/.env.monitoring"
 CHECK_MONITORING=false
 
@@ -95,7 +95,7 @@ header "Forbidden variable check (API_DOMAIN)"
 # and generated env files, not only the two primary env files.
 if grep -r "API_DOMAIN" . --exclude-dir=node_modules 2>/dev/null | grep -E "API_DOMAIN[[:space:]]*="; then
     fail "API_DOMAIN assignment found in repository — this variable has been REMOVED"
-    fail "  Replace with: API_BASE_URL=https://your-domain.com (in apps/api/.env)"
+    fail "  Replace with: API_BASE_URL=https://your-domain.com (in .env)"
     fail "                API_HOSTNAME=your-domain.com (in infra/.env.monitoring)"
 else
     pass "API_DOMAIN assignment not found in repository (correct)"
@@ -104,11 +104,11 @@ fi
 # =============================================================================
 # SECTION 1: Backend .env
 # =============================================================================
-header "Backend environment  (apps/api/.env)"
+header "Backend environment  (.env)"
 
 if [[ ! -f "$API_ENV_FILE" ]]; then
     fail ".env file not found: $API_ENV_FILE"
-    fail "Run:  cp apps/api/.env.example apps/api/.env  and fill in values"
+    fail "Run:  cp .env.example .env  and fill in values"
     printf "\n${RED}Cannot continue — .env is missing.${NC}\n\n"
     exit 1
 fi
@@ -125,7 +125,7 @@ REQUIRED_API_VARS=(
 for var in "${REQUIRED_API_VARS[@]}"; do
     val="$(get_val "$var" "$API_ENV_FILE")"
     if [[ -z "$val" ]]; then
-        fail "$var is not set in apps/api/.env"
+        fail "$var is not set in .env"
     else
         pass "$var is set"
     fi
@@ -175,17 +175,17 @@ else
 fi
 
 # =============================================================================
-# SECTION 3: Contract boundary — API_HOSTNAME must NOT be in apps/api/.env
+# SECTION 3: Contract boundary — API_HOSTNAME must NOT be in .env
 # =============================================================================
 header "Contract boundary check"
 
-# STRICT: API_HOSTNAME must NOT exist in apps/api/.env
+# STRICT: API_HOSTNAME must NOT exist in .env
 if grep -q "^API_HOSTNAME=" "$API_ENV_FILE" 2>/dev/null; then
-    fail "API_HOSTNAME found in apps/api/.env — this violates the env contract"
+    fail "API_HOSTNAME found in .env — this violates the env contract"
     fail "  API_HOSTNAME is derived at deploy-time from API_BASE_URL"
-    fail "  Remove API_HOSTNAME from apps/api/.env immediately"
+    fail "  Remove API_HOSTNAME from .env immediately"
 else
-    pass "API_HOSTNAME absent from apps/api/.env (correct — derived from API_BASE_URL)"
+    pass "API_HOSTNAME absent from .env (correct — derived from API_BASE_URL)"
 fi
 
 # =============================================================================
@@ -236,7 +236,7 @@ else
             pass "API_HOSTNAME is consistent: derived($DERIVED_HOSTNAME) = .env.monitoring($MON_HOSTNAME)"
         else
             fail "API_HOSTNAME MISMATCH:"
-            fail "  apps/api/.env   → API_BASE_URL → $DERIVED_HOSTNAME"
+            fail "  .env   → API_BASE_URL → $DERIVED_HOSTNAME"
             fail "  .env.monitoring → API_HOSTNAME  = $MON_HOSTNAME"
             fail "  Fix: set  API_HOSTNAME=$DERIVED_HOSTNAME  in infra/.env.monitoring"
         fi
@@ -249,11 +249,11 @@ else
         if [[ "$API_MST" == "$MON_MST" ]]; then
             pass "METRICS_SCRAPE_TOKEN is identical in both env files"
         else
-            fail "METRICS_SCRAPE_TOKEN MISMATCH between apps/api/.env and infra/.env.monitoring"
+            fail "METRICS_SCRAPE_TOKEN MISMATCH between .env and infra/.env.monitoring"
             fail "  Prometheus will receive 401s and all metric alerts will go blind"
         fi
     elif [[ -n "$API_MST" && -z "$MON_MST" ]]; then
-        fail "METRICS_SCRAPE_TOKEN set in apps/api/.env but missing in infra/.env.monitoring"
+        fail "METRICS_SCRAPE_TOKEN set in .env but missing in infra/.env.monitoring"
     fi
 fi
 
@@ -270,14 +270,14 @@ if [[ $ERRORS -eq 0 ]]; then
     printf "     API_HOSTNAME  = %s\n" "${DERIVED_HOSTNAME:-(not derivable)}"
     printf "\n"
     printf "  RULES:\n"
-    printf "  • API_BASE_URL  → set in apps/api/.env  (app layer only)\n"
+    printf "  • API_BASE_URL  → set in .env  (app layer only)\n"
     printf "  • API_HOSTNAME  → set in infra/.env.monitoring, derived by load-env.sh\n"
     printf "  • API_DOMAIN    → REMOVED — do not re-add\n\n"
     exit 0
 else
     printf "${RED}${BOLD}❌ %d check(s) failed — fix errors before deploying${NC}\n\n" "$ERRORS"
     printf "  ENV contract:\n"
-    printf "  • API_BASE_URL  = full URL    (https://api.example.com)  → apps/api/.env\n"
+    printf "  • API_BASE_URL  = full URL    (https://api.example.com)  → .env\n"
     printf "  • API_HOSTNAME  = host only   (api.example.com)          → infra/.env.monitoring\n"
     printf "  • API_DOMAIN is deprecated — use API_BASE_URL instead\n\n"
     exit 1

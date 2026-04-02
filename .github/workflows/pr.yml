@@ -96,7 +96,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: package-lock.json
 
       - run: npm ci
         if: needs.detect-changes.outputs.api == 'true'

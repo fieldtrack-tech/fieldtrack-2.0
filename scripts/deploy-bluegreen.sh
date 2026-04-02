@@ -381,7 +381,7 @@ source "$SCRIPT_DIR/load-env.sh"
 set -x
 
 # DEPLOY_ROOT is now exported by load-env.sh.
-DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
+DEPLOY_HISTORY="$DEPLOY_ROOT/.deploy_history"
 
 _ft_log "msg='environment loaded' api_hostname=$API_HOSTNAME"
 

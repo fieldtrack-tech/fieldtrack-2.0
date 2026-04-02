@@ -19,7 +19,7 @@ The `vps-setup.sh` script handles the full first-time setup of a fresh VPS:
 
 ```bash
 # Copy the script to the VPS and run as root
-scp apps/api/scripts/vps-setup.sh root@your-server:/tmp/
+scp scripts/vps-setup.sh root@your-server:/tmp/
 ssh root@your-server 'bash /tmp/vps-setup.sh'
 ```
 
@@ -47,15 +47,15 @@ REPO_URL="https://github.com/your-username/api.git"
 
 ## API Deployment
 1. SSH into VPS
-2. Run `apps/api/scripts/vps-setup.sh` from workspace root
+2. Run `scripts/vps-setup.sh` from workspace root
 3. Set `.env` and `.env.monitoring` in workspace root
 4. Start monitoring stack: `docker-compose -f infra/docker-compose.monitoring.yml up -d`
-5. Deploy API: `apps/api/scripts/deploy-bluegreen.sh`
+5. Deploy API: `scripts/deploy-bluegreen.sh`
 6. Confirm readiness: `curl https://<domain>/ready`
 7. Confirm Prometheus target status is UP
 
 ## Rollback
-1. API: `apps/api/scripts/rollback.sh`
+1. API: `scripts/rollback.sh`
 
 ## Monitoring
 1. Set `.env.monitoring` in workspace root
@@ -95,7 +95,7 @@ On each deploy:
 
 ```bash
 # SSH into the VPS
-cd /home/ashish/api/apps/api
+cd /home/ashish/api
 
 # Deploy a specific image SHA (e.g. from CI output)
 ./scripts/deploy-bluegreen.sh a4f91c2
@@ -111,7 +111,7 @@ cd /home/ashish/api/apps/api
 To instantly revert to the previous deployment:
 
 ```bash
-cd /home/ashish/api/apps/api
+cd /home/ashish/api
 ./scripts/rollback.sh
 ```
 
@@ -155,9 +155,9 @@ The pre-built Grafana dashboard (`infra/grafana/dashboards/fieldtrack.json`) is 
 
 ## Environment Variables
 
-Copy `apps/api/.env.example` to `apps/api/.env` on the VPS and fill in all values before the first deploy.
+Copy `.env.example` to `.env` on the VPS and fill in all values before the first deploy.
 
-See [apps/api/README.md](../apps/api/README.md) for the full variable reference.
+See [README.md](../README.md) for the full variable reference.
 
 ---
 

@@ -6,12 +6,12 @@
 # Safe to run on VPS or locally (uses test values, doesn't modify production).
 #
 # Usage:
-#   bash apps/api/scripts/verify-stabilization.sh
+#   bash scripts/verify-stabilization.sh
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -261,13 +261,13 @@ echo ""
 echo "TEST 8: Backend startup logging"
 echo "-------------------------------"
 
-if grep -q "apiHostname" "$REPO_ROOT/apps/api/src/config/env.ts"; then
+if grep -q "apiHostname" "$REPO_ROOT/src/config/env.ts"; then
     pass "env.ts logs apiHostname"
 else
     fail "env.ts missing apiHostname logging"
 fi
 
-if grep -q "configHash" "$REPO_ROOT/apps/api/src/config/env.ts"; then
+if grep -q "configHash" "$REPO_ROOT/src/config/env.ts"; then
     pass "env.ts logs configHash"
 else
     fail "env.ts missing configHash logging"

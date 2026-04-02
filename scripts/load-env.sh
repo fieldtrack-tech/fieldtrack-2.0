@@ -7,10 +7,10 @@
 #
 # After sourcing, the following are exported into the caller's environment:
 #   DEPLOY_ROOT    — absolute path to the repository root on the VPS
-#   ENV_FILE       — absolute path to apps/api/.env
+#   ENV_FILE       — absolute path to .env
 #   API_HOSTNAME   — bare hostname derived from API_BASE_URL (no scheme/path)
 #
-# All KEY=VALUE pairs from apps/api/.env are also exported into the caller's
+# All KEY=VALUE pairs from .env are also exported into the caller's
 # process, so downstream scripts can reference any app env var directly.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -21,7 +21,7 @@ set +x 2>/dev/null || true
 # Derive repo root from this script's own location so the loader works
 # regardless of the current working directory when it is sourced.
 _LES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_LES_REPO="$(cd "$_LES_DIR/../../.." && pwd)"
+_LES_REPO="$(cd "$_LES_DIR/.." && pwd)"
 
 # ── DEPLOY_ROOT ─────────────────────────────────────────────────────────────
 # Prefer an already-exported value (e.g. set explicitly by the CI SSH step);
@@ -29,11 +29,11 @@ _LES_REPO="$(cd "$_LES_DIR/../../.." && pwd)"
 export DEPLOY_ROOT="${DEPLOY_ROOT:-$_LES_REPO}"
 
 # ── ENV_FILE ─────────────────────────────────────────────────────────────────
-export ENV_FILE="$DEPLOY_ROOT/apps/api/.env"
+export ENV_FILE="$DEPLOY_ROOT/.env"
 
 if [ ! -f "$ENV_FILE" ]; then
     echo "❌ Required .env file not found: $ENV_FILE"
-    echo "   Create it from apps/api/.env.example and populate all required values."
+    echo "   Create it from .env.example and populate all required values."
     exit 1
 fi
 echo "✓ .env file exists: $ENV_FILE"

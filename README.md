@@ -105,8 +105,8 @@ FieldTrack 2.0 is a production-ready REST API backend for managing field workfor
 npm install
 
 # 2. Configure environment
-cp apps/api/.env.example apps/api/.env
-# Edit apps/api/.env — fill in Supabase URL, keys, Redis URL, and ALLOWED_ORIGINS
+cp .env.example .env
+# Edit .env — fill in Supabase URL, keys, Redis URL, and ALLOWED_ORIGINS
 
 # 3. Run in development mode
 npm run dev
@@ -145,18 +145,17 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full setup instructions includi
 
 ```
 api/
-├── apps/api/              # Fastify + TypeScript backend
-│   ├── src/               # Application source
-│   │   ├── modules/       # Domain modules (attendance · locations · expenses · analytics)
-│   │   ├── plugins/       # Fastify plugins (JWT · Prometheus · security stack)
-│   │   ├── workers/       # BullMQ distance calculation worker
-│   │   ├── middleware/     # Auth + role guard
-│   │   └── utils/         # Shared utilities (errors · response · tenant · metrics)
-│   ├── tests/             # Vitest unit and integration tests
-│   └── scripts/           # Blue-green deploy + rollback scripts
-├── infra/                 # Monitoring stack (Prometheus · Grafana · Loki · Tempo)
-├── docs/                  # Project documentation
-└── .github/workflows/     # GitHub Actions CI/CD
+├── src/               # Application source
+│   ├── modules/       # Domain modules (attendance · locations · expenses · analytics)
+│   ├── plugins/       # Fastify plugins (JWT · Prometheus · security stack)
+│   ├── workers/       # BullMQ distance calculation worker
+│   ├── middleware/    # Auth + role guard
+│   └── utils/         # Shared utilities (errors · response · tenant · metrics)
+├── tests/             # Vitest unit and integration tests
+├── scripts/           # Blue-green deploy + rollback scripts
+├── infra/             # Monitoring stack (Prometheus · Grafana · Loki · Tempo)
+├── docs/              # Project documentation
+└── .github/workflows/ # GitHub Actions CI/CD
 ```
 
 ---

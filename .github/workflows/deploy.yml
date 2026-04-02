@@ -64,7 +64,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies (with retry)
         run: |
@@ -116,7 +116,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies (with retry)
         run: |
@@ -128,9 +128,6 @@ jobs:
             sleep 15
           done
           echo "::endgroup::"
-
-      - name: Build shared types
-        run: echo "No separate types build needed — types are inlined in src/types/shared.ts"
 
       - name: Run all tests
         run: npm test

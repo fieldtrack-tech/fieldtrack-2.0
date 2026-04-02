@@ -4,13 +4,13 @@
 
 ### Deploy Latest Version
 ```bash
-cd /api/apps/api
+cd /api
 ./scripts/deploy-bluegreen.sh <SHA>
 ```
 
 ### Rollback to Previous Version
 ```bash
-cd /api/apps/api
+cd /api
 ./scripts/rollback.sh
 ```
 
@@ -95,7 +95,7 @@ cd /api/apps/api
 ## File Locations
 
 ```
-/api/apps/api/
+/api/
 ├── scripts/
 │   ├── deploy-bluegreen.sh
 │   └── rollback.sh
@@ -143,7 +143,7 @@ Production is now running: a4f91c2
 
 | Issue | Solution |
 |-------|----------|
-| Script not executable | `chmod +x apps/api/scripts/rollback.sh` |
+| Script not executable | `chmod +x scripts/rollback.sh` |
 | No deployment history | Deploy at least once before rollback |
 | Insufficient history | Need at least 2 deployments to rollback |
 | Image not found | Verify SHA exists in GHCR |

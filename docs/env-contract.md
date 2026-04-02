@@ -36,13 +36,13 @@
 | `*_HOSTNAME` | Bare domain — **no scheme, no path** | `api.getfieldtrack.app` |
 
 **`API_HOSTNAME` is always DERIVED from `API_BASE_URL` at deploy-time by `load-env.sh`.**  
-It must **never** be set in `apps/api/.env` — set it only in `infra/.env.monitoring`.
+It must **never** be set in `.env` — set it only in `infra/.env.monitoring`.
 
 ---
 
-## Backend — `apps/api`
+## Backend
 
-Validated by `apps/api/src/config/env.ts` (Zod schema, fail-fast).
+Validated by `src/config/env.ts` (Zod schema, fail-fast).
 
 ### URLs
 
@@ -154,17 +154,17 @@ Used by Docker Compose for Prometheus, Grafana, Nginx, Blackbox Exporter.
 | `API_HOSTNAME` | ✅ | Bare domain for Prometheus scrape target and Grafana root URL. **Always derived from `API_BASE_URL`** — set explicitly here to match. Example: `api.getfieldtrack.app` |
 
 | `GRAFANA_ADMIN_PASSWORD` | ✅ | Grafana admin account password (min 12 chars). |
-| `METRICS_SCRAPE_TOKEN` | ✅ | **Must be identical to `METRICS_SCRAPE_TOKEN` in `apps/api/.env`.** Bearer token for `/metrics` scraping. |
+| `METRICS_SCRAPE_TOKEN` | ✅ | **Must be identical to `METRICS_SCRAPE_TOKEN` in `.env`.** Bearer token for `/metrics` scraping. |
 | `ALERTMANAGER_SLACK_WEBHOOK` | ✅ | Slack incoming webhook URL for alert delivery. |
 
 ---
 
 ## Environment Examples
 
-### Development (`.env.local` / `apps/api/.env`)
+### Development (`.env.local` / `.env`)
 
 ```bash
-# Backend apps/api/.env
+# Backend .env
 CONFIG_VERSION=1
 APP_ENV=development
 NODE_ENV=development

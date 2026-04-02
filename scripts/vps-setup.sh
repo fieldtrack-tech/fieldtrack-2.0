@@ -322,12 +322,12 @@ log "GHCR login successful."
 # ============================================================================
 log "Phase 13: Setting up environment file..."
 
-ENV_FILE="$REPO_DIR/apps/api/.env"
+ENV_FILE="$REPO_DIR/.env"
 
 if [ -f "$ENV_FILE" ]; then
     warn ".env file already exists. Verify its contents are correct."
 else
-    cp "$REPO_DIR/apps/api/.env.example" "$ENV_FILE"
+    cp "$REPO_DIR/.env.example" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     chown "$DEPLOY_USER:$DEPLOY_USER" "$ENV_FILE"
     warn ".env file created from template. EDIT IT NOW:"
@@ -366,7 +366,7 @@ sudo -u "$DEPLOY_USER" docker pull ghcr.io/fieldtrack-tech/api:latest
 if [ -f "$ENV_FILE" ] && grep -q "SUPABASE_URL=your-" "$ENV_FILE"; then
     warn "Skipping container start — .env still has placeholder values."
     warn "After editing .env, run:"
-    warn "  cd $REPO_DIR/apps/api && ./scripts/deploy-bluegreen.sh latest"
+    warn "  cd $REPO_DIR && ./scripts/deploy-bluegreen.sh latest"
 else
     sudo -u "$DEPLOY_USER" docker run -d \
         --name api-blue \

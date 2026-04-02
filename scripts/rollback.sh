@@ -7,13 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load and validate environment.
 # Sets: DEPLOY_ROOT, ENV_FILE, API_HOSTNAME.
-# Exports all variables from apps/api/.env into this process.
+# Exports all variables from .env into this process.
 # Disable trace to prevent secrets from leaking into logs.
 set +x
 source "$SCRIPT_DIR/load-env.sh"
 set -x
 
-DEPLOY_HISTORY="$DEPLOY_ROOT/apps/api/.deploy_history"
+DEPLOY_HISTORY="$DEPLOY_ROOT/.deploy_history"
 
 AUTO_MODE=false
 

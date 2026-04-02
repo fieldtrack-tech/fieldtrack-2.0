@@ -208,7 +208,7 @@ Each monitoring container has a Docker-managed memory ceiling enforced via `depl
 
 ## Monitoring Stack Restart Policy
 
-The deploy script ([apps/api/scripts/deploy-bluegreen.sh](../apps/api/scripts/deploy-bluegreen.sh)) and the CI sync-infra job only restart the monitoring stack when monitoring configuration has actually changed.
+The deploy script ([scripts/deploy-bluegreen.sh](../scripts/deploy-bluegreen.sh)) and the CI sync-infra job only restart the monitoring stack when monitoring configuration has actually changed.
 
 Change detection uses a SHA-256 hash over all files matching:
 
