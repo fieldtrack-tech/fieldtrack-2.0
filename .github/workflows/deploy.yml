@@ -129,6 +129,22 @@ jobs:
           ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (with retry)
+        run: |
+          echo "::group::npm ci"
+          for attempt in 1 2 3; do
+            npm ci && break
+            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
+            echo "Attempt $attempt failed — retrying in 15s..."
+            sleep 15
+          done
+          echo "::endgroup::"
 
       - name: TypeScript check
         run: npm run typecheck
