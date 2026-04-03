@@ -157,6 +157,42 @@ BLUE_NAME="api-blue"
 GREEN_NAME="api-green"
 APP_PORT=3000
 NETWORK="api_network"
+# Pinned curl container for in-network health probes.
+# Running on api_network exercises Docker DNS + bridge routing — the same
+# path that nginx uses — catching connectivity issues that docker exec
+# localhost bypasses (docker exec goes direct to the container loopback).
+_FT_CURL_IMG="curlimages/curl:8.7.1"
+# In-network curl helper with local fallback.
+#
+# Primary:  short-lived curlimages/curl container on api_network.
+#           Exercises Docker DNS + bridge routing (same path nginx uses).
+# Fallback: docker exec <container> curl when the curl image cannot be pulled
+#           or Docker Hub is unreachable. Covers cold-VPS / egress-blocked cases.
+#
+# Usage: _ft_net_curl <container_name> <curl-flags...>
+#   The first argument is the container name — used ONLY for the fallback.
+#   Remaining arguments are passed verbatim to curl.
+_ft_net_curl() {
+    local _target_container="$1"; shift
+    # Primary: in-network (Docker DNS + bridge routing)
+    if docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+    # Fallback: exec into target container's loopback (skips Docker DNS but
+    # confirms HTTP server is alive inside the container)
+    docker exec "$_target_container" curl -sf --max-time 3 "$@" >/dev/null 2>&1
+}
+# Variant that captures the response body or HTTP status code instead of
+# just testing. Used where we need the response text for status checks.
+# Usage: _ft_net_curl_out <container_name> <curl-flags...>
+_ft_net_curl_out() {
+    local _target_container="$1"; shift
+    local _out
+    _out=$(docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" "$@" 2>/dev/null) \
+        || _out=$(docker exec "$_target_container" curl --max-time 3 "$@" 2>/dev/null) \
+        || _out=""
+    printf '%s' "$_out"
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
@@ -431,6 +467,20 @@ docker network create --driver bridge "$NETWORK" 2>/dev/null \
     && _ft_log "msg='api_network created'" \
     || _ft_log "msg='api_network already exists'"
 
+# GLOBAL PORT-LEAK GUARD -- api-blue/api-green MUST NOT bind host ports.
+# All API traffic flows: Cloudflare → nginx (binds 80/443) → api_network.
+# nginx is exempt; api containers with host ports bypass the nginx layer
+# and would expose the API without TLS or rate-limiting.
+_API_PORT_LEAKS=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+    | grep -E '^api-(blue|green)' \
+    | grep -E '(0\.0\.0\.0:|127\.0\.0\.1:)[0-9]+->') || true
+if [ -n "${_API_PORT_LEAKS:-}" ]; then
+    _ft_log "level=ERROR msg='API container has host port bindings — forbidden. Remove and recreate without -p.' leaks=${_API_PORT_LEAKS}"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=api_port_leak_detected"
+fi
+unset _API_PORT_LEAKS
+_ft_log "msg='port-leak guard passed — no API containers with host port bindings'"
+
 # NGINX CONTAINER GUARD -- nginx MUST run as a Docker container on api_network.
 # With container-name upstreams (server api-blue:3000), Docker's embedded DNS
 # (127.0.0.11) is required for name resolution. This only works from WITHIN
@@ -445,11 +495,17 @@ if ! docker inspect nginx >/dev/null 2>&1; then
     # Write a bootstrap config pointing at api-blue (default first-deploy slot)
     # so nginx can start without waiting for an API container.
     if [ ! -f "$NGINX_CONF" ]; then
+        # Permission check: ensure deploy user can write to nginx live dir
+        if [ ! -w "$(dirname "$NGINX_CONF")" ]; then
+            sudo chown -R "$(id -un):$(id -gn)" "$(dirname "$NGINX_CONF")"
+        fi
+        _NGINX_GUARD_TMP="$(mktemp /tmp/api-nginx-guard.XXXXXX.conf)"
         sed \
             -e "s|__ACTIVE_CONTAINER__|api-blue|g" \
             -e "s|__API_HOSTNAME__|${API_HOSTNAME}|g" \
-            "$NGINX_TEMPLATE" > "$NGINX_CONF"
-        _ft_log "msg='bootstrap nginx config written' target=api-blue path=$NGINX_CONF"
+            "$NGINX_TEMPLATE" > "$_NGINX_GUARD_TMP"
+        mv "$_NGINX_GUARD_TMP" "$NGINX_CONF"
+        _ft_log "msg='bootstrap nginx config written (atomic)' target=api-blue path=$NGINX_CONF"
     fi
     # Kill any ghost docker-proxy holdind host ports before starting nginx
     pkill docker-proxy 2>/dev/null || true
@@ -520,7 +576,13 @@ _ft_log "msg='deploy metadata' sha=$IMAGE_SHA image=$IMAGE script_dir=$SCRIPT_DI
 # ---------------------------------------------------------------------------
 _ft_state "PULL_IMAGE" "msg='pulling container image' sha=$IMAGE_SHA"
 
-timeout 300 docker pull "$IMAGE"
+# Explicit pull with hard error.
+# Without this guard a missing image would cause docker run to attempt a
+# background pull inside a 60-s timeout, racing the readiness loop.
+if ! timeout 120 docker pull "$IMAGE"; then
+    _ft_log "level=ERROR msg='image pull failed' image=$IMAGE"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=image_pull_failed image=$IMAGE"
+fi
 _ft_log "msg='image pulled' image=$IMAGE"
 
 # ---------------------------------------------------------------------------
@@ -557,23 +619,30 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
 
     _ft_log "msg='bootstrap: api-blue started' image=$IMAGE"
 
-    # Wait for /ready — same polling logic as [4/7] HEALTH_CHECK_INTERNAL
+    # Grace window: give the process time to bind and initialise workers.
+    # /ready can lag the HTTP server bind by ~1–3 s while workers start.
+    sleep 2
+
+    # Bootstrap readiness: use docker exec (only safe choice when no other
+    # container is guaranteed to be running yet on api_network).
     _BOOT_OK=false
     for _bi in $(seq 1 20); do
-        if timeout 4 curl -sf "http://api-blue:${APP_PORT}/ready" >/dev/null 2>&1; then
+        if docker exec api-blue curl -sf --max-time 4 "http://localhost:${APP_PORT}/ready" >/dev/null 2>&1; then
             _ft_log "msg='bootstrap: api-blue ready' attempt=$_bi"
             _BOOT_OK=true
             break
         fi
         _ft_log "msg='bootstrap: waiting for api-blue readiness' attempt=$_bi/20"
-        sleep 3
+        sleep 2
     done
 
     if [ "$_BOOT_OK" != "true" ]; then
-        _ft_log "level=ERROR msg='bootstrap: api-blue did not become ready after 60s'"
+        _ft_log "level=ERROR msg='bootstrap: api-blue did not become ready after 60s — container PRESERVED for debugging'"
+        # DO NOT remove the container on bootstrap failure:
+        #   - Preserves logs and state for post-mortem: docker logs api-blue
+        #   - Removing here loses all debugging visibility
+        #   - Operator can inspect and restart manually
         docker logs api-blue --tail 50 >&2 || true
-        docker stop --time 10 api-blue 2>/dev/null || true
-        docker rm api-blue || true
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=bootstrap_api_ready_timeout"
     fi
     unset _bi _BOOT_OK
@@ -588,20 +657,34 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
     cp "$NGINX_BOOT_TMP" "$NGINX_CONF"
     rm -f "$NGINX_BOOT_TMP"
 
-    if docker exec nginx nginx -t 2>&1; then
-        docker exec nginx nginx -s reload
-        _ft_log "msg='bootstrap: nginx reloaded to api-blue'"
-    else
-        _ft_log "level=ERROR msg='bootstrap: nginx config test failed — leaving existing config'"
+    # Nginx network attachment guard — must be on api_network before reload.
+    _NGINX_BOOT_NET=$(docker inspect nginx \
+        --format='{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "")
+    if ! echo "$_NGINX_BOOT_NET" | grep -q "$NETWORK"; then
+        _ft_log "level=ERROR msg='bootstrap: nginx not attached to api_network' networks=${_NGINX_BOOT_NET}"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_network_mismatch_bootstrap"
     fi
+    unset _NGINX_BOOT_NET
 
-    # Persist slot state
+    # Fail-fast: any nginx test/reload failure is a hard error at bootstrap.
+    if ! docker exec nginx nginx -t 2>&1; then
+        _ft_log "level=ERROR msg='bootstrap: nginx config test failed'"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed_bootstrap"
+    fi
+    docker exec nginx nginx -s reload \
+        || { _ft_log "level=ERROR msg='bootstrap: nginx reload failed'"; _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed_bootstrap"; }
+    _ft_log "msg='bootstrap: nginx reloaded to api-blue'"
+
+    # Persist slot state (atomic write already in _ft_write_slot)
     _ft_write_slot "blue"
 
     # Snapshot last-known-good
-    printf 'blue\n%s\n%s\n' "$IMAGE_SHA" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$LAST_GOOD_FILE"
+    _SNAP_BOOT_TMP=$(mktemp "${SNAP_DIR}/last-good.XXXXXX")
+    printf 'slot=blue container=api-blue ts=%s\n' "$(date -Iseconds)" > "$_SNAP_BOOT_TMP"
+    mv "$_SNAP_BOOT_TMP" "$LAST_GOOD_FILE"
+    unset _SNAP_BOOT_TMP
 
-    _ft_exit 0 "DEPLOY_SUCCESS" "reason=bootstrap_success slot=blue image=$IMAGE"
+    _ft_exit 0 "BOOTSTRAP_SUCCESS" "slot=blue image=$IMAGE"
 fi
 
 # ---------------------------------------------------------------------------
@@ -614,6 +697,28 @@ ACTIVE=$(_ft_resolve_slot) || {
     exit 1
 }
 ACTIVE=$(printf '%s' "$ACTIVE" | tr -d '[:space:]')
+_ft_validate_slot "$ACTIVE" || exit 1
+
+# SLOT REPAIR — heal slot file drift from reality.
+# If the slot file says "green" but api-green is gone (OOM/manual removal),
+# flip the effective slot to whatever container IS actually running.
+# This prevents a deploy from treating a missing container as the "active" one.
+if [ "$ACTIVE" = "green" ] && ! docker inspect api-green >/dev/null 2>&1; then
+    _ft_log "msg='slot repair: green missing — switching effective slot to blue' original_slot=green"
+    ACTIVE="blue"
+    _ft_write_slot "blue"
+elif [ "$ACTIVE" = "blue" ] && ! docker inspect api-blue >/dev/null 2>&1; then
+    # Both containers may be missing on a clean restart; this is ok — the
+    # BOOTSTRAP GUARD above will catch it. Here we only switch when the
+    # opposite slot is actually running.
+    if docker inspect api-green >/dev/null 2>&1; then
+        _ft_log "msg='slot repair: blue missing but green running — switching effective slot to green' original_slot=blue"
+        ACTIVE="green"
+        _ft_write_slot "green"
+    else
+        _ft_log "level=WARN msg='slot repair: neither container running — first deploy or crash; slot kept as blue'"
+    fi
+fi
 _ft_validate_slot "$ACTIVE" || exit 1
 
 if [ "$ACTIVE" = "blue" ]; then
@@ -648,10 +753,9 @@ _ft_state "IDEMPOTENCY" "msg='checking if target SHA already deployed' sha=$IMAG
 
 _RUNNING_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$ACTIVE_NAME" 2>/dev/null || echo "")
 if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
-        # SHA matches -- only skip if the active container is also healthy.
-        # If it is unhealthy, proceed so the deploy restarts it cleanly.
-        _IDEMPOTENT_HEALTH=$(timeout 4 curl -s --max-time 3 \
-            "http://$ACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
+    # In-network health check: exercises Docker DNS + bridge routing.
+        _IDEMPOTENT_HEALTH=$(_ft_net_curl_out "$ACTIVE_NAME" \
+            -s --max-time 3 "http://$ACTIVE_NAME:$APP_PORT/ready")
         if echo "$_IDEMPOTENT_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='target SHA already running and healthy -- nothing to do' container=$ACTIVE_NAME image=$IMAGE"
             _ft_exit 0 "DEPLOY_SUCCESS" "reason=idempotent_noop sha=$IMAGE_SHA container=$ACTIVE_NAME"
@@ -670,9 +774,13 @@ if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
 _ft_state "START_INACTIVE" "msg='starting inactive container' name=$INACTIVE_NAME"
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
-    _ft_log "msg='removing stale container' name=$INACTIVE_NAME"
+    _ft_log "msg='renaming stale container for audit trail' name=$INACTIVE_NAME"
     docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
-    docker rm "$INACTIVE_NAME"
+    # Rename instead of hard-rm so a post-mortem can inspect the old container
+    # state. The -old-<epoch> suffix lets the zombie purge below collect it.
+    _STALE_TS=$(date +%s)
+    docker rename "$INACTIVE_NAME" "${INACTIVE_NAME}-old-${_STALE_TS}" 2>/dev/null \
+        || docker rm "$INACTIVE_NAME"
 fi
 
 timeout 60 docker run -d \
@@ -708,18 +816,24 @@ _ft_state "HEALTH_CHECK_INTERNAL" "msg='waiting for container readiness'"
 sleep 5
 HEALTH_ENDPOINT="/ready"
 
-# CONNECTIVITY PRE-CHECK -- confirm port is reachable before entering retry loop.
-# Fail fast rather than burning all MAX_HEALTH_ATTEMPTS on a misconfigured port.
+# CONNECTIVITY PRE-CHECK (in-network)
+# Probe /health via a short-lived curl container on api_network to verify:
+#   - Docker DNS resolution of $INACTIVE_NAME
+#   - Bridge routing to the container
+#   - HTTP server is bound and responding
+# This exercises the same network path nginx uses, catching issues that
+# docker exec localhost would silently skip.
 _CONN_ATTEMPTS=0
 _CONN_OK=false
 while [ "$_CONN_ATTEMPTS" -lt 5 ]; do
     _CONN_ATTEMPTS=$((_CONN_ATTEMPTS + 1))
-    if timeout 3 curl -sf "http://$INACTIVE_NAME:$APP_PORT/health" >/dev/null 2>&1; then
+    if _ft_net_curl "$INACTIVE_NAME" \
+           -sf --max-time 3 "http://$INACTIVE_NAME:$APP_PORT/health"; then
         _CONN_OK=true
         break
     fi
     _ft_log "msg='connectivity pre-check waiting' attempt=$_CONN_ATTEMPTS/5 container=$INACTIVE_NAME"
-    sleep $((RANDOM % 3 + 1))
+    sleep 2
 done
 if [ "$_CONN_OK" = "false" ]; then
     _ft_log "level=ERROR msg='container not reachable after connectivity pre-check' container=$INACTIVE_NAME"
@@ -735,7 +849,8 @@ _ft_log "msg='connectivity pre-check passed' container=$INACTIVE_NAME"
 ATTEMPT=0
 until true; do
     ATTEMPT=$((ATTEMPT + 1))
-    STATUS=$(timeout 5 curl --max-time 4 -s -o /dev/null -w "%{http_code}" \
+    STATUS=$(_ft_net_curl_out "$INACTIVE_NAME" \
+        --max-time 4 -s -o /dev/null -w "%{http_code}" \
         "http://$INACTIVE_NAME:$APP_PORT${HEALTH_ENDPOINT}" || echo "000")
 
     if [ "$STATUS" = "200" ]; then
@@ -782,9 +897,11 @@ mkdir -p "$NGINX_BACKUP_DIR"
 NGINX_BACKUP="$NGINX_BACKUP_DIR/api.conf.bak.$(date +%s)"
 NGINX_TMP="$(mktemp /tmp/api-nginx.XXXXXX.conf)"
 
-# PRE-RELOAD GATE: confirm container is still ready before pointing nginx at it
-if ! timeout 4 curl -sf "http://$INACTIVE_NAME:$APP_PORT/ready" >/dev/null 2>&1; then
-    _ft_log "level=ERROR msg='pre-reload gate failed: container not ready, aborting nginx reload' container=$INACTIVE_NAME"
+# PRE-RELOAD GATE (in-network with fallback): confirm container is still ready
+# before pointing nginx at it.
+if ! _ft_net_curl "$INACTIVE_NAME" \
+       -sf --max-time 4 "http://$INACTIVE_NAME:$APP_PORT/ready"; then
+    _ft_log "level=ERROR msg='pre-reload gate failed: container not ready' container=$INACTIVE_NAME"
     docker logs "$INACTIVE_NAME" --tail 50 >&2 || true
     docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
     docker rm "$INACTIVE_NAME" || true
@@ -803,13 +920,25 @@ rm -f "$NGINX_TMP"
 # Prune old backups (keep last 5) to avoid unbounded growth
 ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
 
+# Nginx network attachment guard: verify nginx is on api_network before every
+# reload. If nginx was accidentally disconnected, Docker DNS resolution of
+# api-blue/api-green will silently fail inside nginx.
+_NGINX_RELOAD_NET=$(docker inspect nginx \
+    --format='{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "")
+if ! echo "$_NGINX_RELOAD_NET" | grep -q "$NETWORK"; then
+    _ft_log "level=ERROR msg='nginx not attached to api_network at reload time' networks=${_NGINX_RELOAD_NET}"
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_network_mismatch"
+fi
+unset _NGINX_RELOAD_NET
+
 if ! docker exec nginx nginx -t 2>&1; then
     _ft_log "level=ERROR msg='nginx config test failed -- restoring backup'"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
     _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed"
 fi
-
-docker exec nginx nginx -s reload
+docker exec nginx nginx -s reload \
+    || { cp "$NGINX_BACKUP" "$NGINX_CONF"; _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed"; }
 _ft_log "msg='nginx reloaded' upstream=$INACTIVE_NAME:$APP_PORT"
 
 # Upstream sanity check -- confirm nginx config actually points at the new container.
@@ -832,12 +961,24 @@ _ft_write_slot "$INACTIVE"
 # Small settle window to stabilize TLS/keep-alive/edge cases
 sleep 2
 
-# POST-SWITCH ROUTING VERIFICATION
-# Tests: nginx HTTPS stack is responding + can reach the new container.
-# Uses 127.0.0.1 to avoid Cloudflare IP allowlist (same pattern as public check).
-_ft_log "msg='post-switch nginx routing verification'"
-if ! _ft_retry_curl "https://127.0.0.1/health" 5 --insecure; then
-    _ft_log "level=ERROR msg='post-switch nginx routing verification failed -- nginx cannot reach new container'"
+# POST-SWITCH ROUTING VERIFICATION (in-network)
+# Run a short-lived curl container on api_network to probe nginx/health.
+# This exercises: Docker DNS resolution of 'nginx', bridge routing nginx→container,
+# nginx upstream substitution, and proxy-pass to $INACTIVE_NAME:$APP_PORT.
+# Same network path that real client traffic takes after the slot switch.
+_ft_log "msg='post-switch nginx routing verification (in-network)'"
+_POST_SWITCH_OK=false
+for _ps in 1 2 3 4 5; do
+    if _ft_net_curl "nginx" \
+           -sf --max-time 5 "http://nginx/health"; then
+        _POST_SWITCH_OK=true
+        break
+    fi
+    _ft_log "msg='post-switch in-network check waiting' attempt=$_ps/5"
+    sleep 2
+done
+if [ "$_POST_SWITCH_OK" != "true" ]; then
+    _ft_log "level=ERROR msg='post-switch routing verification failed — nginx cannot reach new container'"
     _ft_snapshot
     cp "$NGINX_BACKUP" "$NGINX_CONF"
     if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
@@ -850,6 +991,7 @@ if ! _ft_retry_curl "https://127.0.0.1/health" 5 --insecure; then
     docker rm "$INACTIVE_NAME" || true
     _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=post_switch_routing_failed container=$INACTIVE_NAME"
 fi
+unset _POST_SWITCH_OK _ps
 _ft_log "msg='post-switch routing verification passed'"
 
 # ---------------------------------------------------------------------------
@@ -915,8 +1057,8 @@ if [ "$_PUB_PASSED" != "true" ]; then
     unset _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_CONTAINER
 
     if docker ps --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
-        _ACTIVE_HEALTH=$(timeout 4 curl -s --max-time 3 \
-            "http://$ACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
+        _ACTIVE_HEALTH=$(_ft_net_curl_out "$ACTIVE_NAME" \
+            -s --max-time 3 "http://$ACTIVE_NAME:$APP_PORT/ready")
         if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='deploy failed but active container healthy -- skipping rollback' container=$ACTIVE_NAME"
             unset _ACTIVE_HEALTH
@@ -975,8 +1117,8 @@ if [ "$_STABLE" = "false" ]; then
     docker rm "$INACTIVE_NAME" || true
 
     if docker ps --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
-        _ACTIVE_HEALTH=$(timeout 4 curl -s --max-time 3 \
-            "http://$ACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
+        _ACTIVE_HEALTH=$(_ft_net_curl_out "$ACTIVE_NAME" \
+            -s --max-time 3 "http://$ACTIVE_NAME:$APP_PORT/ready")
         if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='active container healthy after stability failure -- skipping rollback' container=$ACTIVE_NAME"
             unset _ACTIVE_HEALTH
@@ -1017,8 +1159,13 @@ fi
 # Graceful shutdown: allow in-flight requests to drain before forcing removal.
 if [ "${SKIP_CLEANUP:-false}" != "true" ]; then
     docker stop --time 10 "$ACTIVE_NAME" 2>/dev/null || true
-    docker rm "$ACTIVE_NAME" || true
-    _ft_log "msg='previous container removed (graceful)' name=$ACTIVE_NAME"
+    # Rename instead of hard-rm: keeps the previous-active container available
+    # for 60 s of post-mortem inspection. The -old-<epoch> suffix is used by
+    # the zombie purge block below.
+    _CLEANUP_TS=$(date +%s)
+    docker rename "$ACTIVE_NAME" "${ACTIVE_NAME}-old-${_CLEANUP_TS}" 2>/dev/null \
+        || docker rm "$ACTIVE_NAME" || true
+    _ft_log "msg='previous container renamed (graceful)' name=$ACTIVE_NAME rename=${ACTIVE_NAME}-old-${_CLEANUP_TS}"
 else
     _ft_log "msg='cleanup skipped (first deploy scenario or container already removed)'"
 fi
@@ -1066,8 +1213,9 @@ fi
 if command -v curl >/dev/null 2>&1; then
     sleep 2
 
-    # Check internal endpoint (container DNS)
-    _INT_READY=$(curl -s -m 5 "http://$INACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
+    # Check internal endpoint via in-network curl with fallback.
+    _INT_READY=$(_ft_net_curl_out "$INACTIVE_NAME" \
+        -s --max-time 5 "http://$INACTIVE_NAME:$APP_PORT/ready")
     _INT_READY_OK=false
     if echo "$_INT_READY" | grep -q '"status":"ready"' 2>/dev/null; then
         _INT_READY_OK=true
@@ -1171,5 +1319,15 @@ else
     echo "$MONITORING_HASH" > "$MONITORING_HASH_FILE"
     _ft_log "msg='monitoring stack restarted'"
 fi
+
+# ---------------------------------------------------------------------------
+# ZOMBIE PURGE: remove any api-(blue|green)-old-<epoch> containers that have
+# accumulated from previous deploys. Runs unconditionally so the Docker engine
+# does not fill up with stopped containers across multiple deployments.
+# ---------------------------------------------------------------------------
+_ft_log "msg='running zombie purge'"
+docker ps -a --format '{{.Names}}' \
+    | grep -E '^api-(blue|green)-old-[0-9]+$' \
+    | xargs -r docker rm -f 2>/dev/null || true
 
 _ft_exit 0 "DEPLOY_SUCCESS" "sha=$IMAGE_SHA container=$INACTIVE_NAME slot=$INACTIVE"

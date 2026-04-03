@@ -91,16 +91,26 @@ jobs:
         if: github.event_name == 'workflow_run'
         run: |
           CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
           SHA="${{ github.event.workflow_run.head_sha }}"
           echo "CodeQL deep scan conclusion : $CONCLUSION"
           echo "Scanned commit SHA          : $SHA"
+          echo "Head branch                 : $BRANCH"
+          # Branch guard: only master commits deploy to production.
+          # The workflow_run trigger already filters branches: [master], but this
+          # explicit check makes the policy visible in the job log and provides a
+          # hard error if the filter is ever widened accidentally.
+          if [ "$BRANCH" != "master" ]; then
+            echo "::error::Deploy blocked — head_branch=$BRANCH (only master is allowed to deploy to production)."
+            exit 1
+          fi
           if [ "$CONCLUSION" != "success" ]; then
             echo "::error::CodeQL deep scan did not pass (conclusion=$CONCLUSION)."
             echo "  Deployment is blocked. Review findings before retrying:"
             echo "  https://github.com/${{ github.repository }}/security/code-scanning"
             exit 1
           fi
-          echo "✓ CodeQL gate passed — safe to deploy SHA $SHA"
+          echo "✓ CodeQL gate passed — safe to deploy SHA $SHA (branch=$BRANCH)"
 
   # ---------------------------------------------------------------------------
   # JOB: validate

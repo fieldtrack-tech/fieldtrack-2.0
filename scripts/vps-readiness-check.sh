@@ -87,7 +87,20 @@ if ! docker network ls --format '{{.Name}}' | grep -Eq "^${NETWORK}$"; then
 else
   ok "Network '$NETWORK' exists."
 fi
-
+# ── AUTO-FIX: Kill ghost docker-proxy processes that may hold stale ports ──────
+#
+# docker-proxy processes can linger after container removal and hold ports
+# 80/443 as ghosts. They are safe to kill (Docker recreates them as needed).
+echo ""
+echo "--- AUTO-FIX: ghost docker-proxy cleanup ---"
+if pgrep -x docker-proxy >/dev/null 2>&1; then
+  warn "Ghost docker-proxy processes detected — killing stale port holders."
+  sudo pkill -x docker-proxy 2>/dev/null || true
+  sleep 1
+  ok "Ghost docker-proxy processes cleared."
+else
+  ok "No ghost docker-proxy processes."
+fi
 # ── CHECK 4: Ports 80 and 443 — no non-docker processes ──────────────────────
 #
 # Design: we do NOT auto-kill unknown processes. If port 80 or 443 is held by
@@ -134,24 +147,29 @@ _check_port() {
 _check_port 80
 _check_port 443
 
-# ── CHECK 5: No host port bindings on ANY container ────────────────────────────
+# ── CHECK 5: No host port bindings on API containers ────────────────────────
 #
-# Production architecture invariant: NO container may bind host ports.
-# All inter-service communication uses Docker DNS on api_network.
-# A host port binding on any container indicates a misconfigured container
-# that could expose services unintentionally or break Docker DNS routing.
+# Production architecture invariant: api-blue and api-green MUST NOT bind host
+# ports. All inter-service communication uses Docker DNS on api_network.
+#
+# nginx is EXEMPT: it intentionally binds 0.0.0.0:80 and 0.0.0.0:443 to receive
+# external traffic from Cloudflare. That is the intended, correct behaviour.
+#
+# Only api-blue and api-green are checked. Exposing these containers on host ports
+# would bypass the nginx layer and could expose the API without TLS or rate-limiting.
 echo ""
-echo "--- CHECK 5: Global host port binding invariant ---"
+echo "--- CHECK 5: API container host port binding invariant ---"
 BOUND=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+  | grep -E '^api-(blue|green) ' \
   | grep -E '(0\.0\.0\.0:|127\.0\.0\.1:)[0-9]+->' || true)
 
 if [ -n "$BOUND" ]; then
-  record_failure "Host port bindings detected — violates production architecture:"
+  record_failure "API container has host port bindings — violates production architecture:"
   echo "$BOUND" | sed 's/^/  /'
-  echo "  Production pattern: all containers run --network api_network without -p."
+  echo "  Production pattern: api-blue/api-green run --network api_network without -p."
   echo "  Remove and recreate the offending container(s) without port bindings."
 else
-  ok "No host port bindings on any running container."
+  ok "No host port bindings on API containers (api-blue/api-green)."
 fi
 
 # ── CHECK 6: Required env files ────────────────────────────────────────────────
