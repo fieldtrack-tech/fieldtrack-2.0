@@ -278,6 +278,15 @@ else
     log "Docker network '$NETWORK' created."
 fi
 
+# Create runtime state directory for blue-green slot tracking.
+# /var/run is tmpfs (cleared on reboot); _ft_ensure_slot_dir recreates it on
+# each deploy, but creating it here avoids a first-boot race condition.
+log "Phase 9b: Creating runtime state directories..."
+install -d -m 750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /var/run/api 2>/dev/null || true
+install -d -m 755 /var/log/api 2>/dev/null || true
+chown "$DEPLOY_USER:$DEPLOY_USER" /var/log/api 2>/dev/null || true
+log "Runtime state directories ready (/var/run/api, /var/log/api)."
+
 # ============================================================================
 # PHASE 10: Nginx Installation & Configuration
 # ============================================================================
@@ -353,13 +362,26 @@ else
 fi
 
 MONITORING_ENV_FILE="$REPO_DIR/infra/.env.monitoring"
+MONITORING_ENV_EXAMPLE="$REPO_DIR/infra/.env.monitoring.example"
 
 if [ -f "$MONITORING_ENV_FILE" ]; then
     chmod 600 "$MONITORING_ENV_FILE"
     chown "$DEPLOY_USER:$DEPLOY_USER" "$MONITORING_ENV_FILE"
     warn "Monitoring env file detected. Verify its values: $MONITORING_ENV_FILE"
+elif [ -f "$MONITORING_ENV_EXAMPLE" ]; then
+    # Self-heal: create from example so subsequent deploy scripts do not fail.
+    # The operator MUST fill in real values before monitoring is functional.
+    cp "$MONITORING_ENV_EXAMPLE" "$MONITORING_ENV_FILE"
+    chmod 600 "$MONITORING_ENV_FILE"
+    chown "$DEPLOY_USER:$DEPLOY_USER" "$MONITORING_ENV_FILE"
+    warn "infra/.env.monitoring created from example — ACTION REQUIRED:"
+    warn "  Edit $MONITORING_ENV_FILE and set:"
+    warn "    GRAFANA_ADMIN_PASSWORD   — strong password (min 12 chars)"
+    warn "    METRICS_SCRAPE_TOKEN     — must match METRICS_SCRAPE_TOKEN in .env"
+    warn "    ALERTMANAGER_SLACK_WEBHOOK — Slack incoming webhook URL"
+    warn "    API_HOSTNAME             — bare hostname (e.g. api.getfieldtrack.app)"
 else
-    err "Missing $MONITORING_ENV_FILE. Ensure infra/.env.monitoring exists in the repository."
+    err "infra/.env.monitoring and infra/.env.monitoring.example both missing. Cannot continue."
 fi
 
 # ============================================================================

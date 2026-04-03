@@ -1,0 +1,86 @@
+name: "CodeQL — Deep Scan (post-merge)"
+# Runs after every merge to master AND on a weekly schedule.
+# Uses the full security-and-quality query suite — significantly more thorough
+# than the PR lightweight scan.
+#
+# DOES NOT block the Deploy pipeline.  Both workflows trigger independently on
+# a master push; deploy.yml never depends on this workflow.  Results are
+# uploaded to the GitHub Security tab for async review.
+#
+# If critical issues are found, the security team should open a tracking issue
+# and gate the next deployment manually.  This workflow itself never fails the
+# deploy unless an operator explicitly adds it as a required check.
+
+on:
+  push:
+    branches: ["master"]
+  schedule:
+    # Every Monday at 03:15 UTC — offset from midnight to avoid GHA congestion.
+    - cron: "15 3 * * 1"
+
+# Do not cancel in-progress deep scans — let them complete for full coverage.
+concurrency:
+  group: codeql-deep-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze-deep:
+    name: Deep Analyze (CodeQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["javascript"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js (match production)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build || true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # Full suite: security + quality + style rules.
+          # Catches OWASP Top-10 plus code-quality issues that may hide security risks.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "codeql-deep"
+          # Upload unconditionally — results land in the Security tab regardless
+          # of whether any alerts are found.
+          upload: always
+
+      - name: Write deep-scan summary
+        if: always()
+        run: |
+          {
+            echo "## CodeQL Deep Scan"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Ref | \`${{ github.ref }}\` |"
+            echo "| Query suite | \`security-and-quality\` |"
+            echo "| Results | [Security tab](/${{ github.repository }}/security/code-scanning) |"
+          } >> "$GITHUB_STEP_SUMMARY"
