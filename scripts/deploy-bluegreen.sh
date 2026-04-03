@@ -172,23 +172,19 @@ NETWORK="api_network"
 _FT_CURL_IMG="curlimages/curl:8.7.1"
 # In-network curl helper with local fallback.
 #
+# PRIMARY CURL HELPERS — use docker run on api_network (reliable DNS + routing)
+#
 # Primary:  short-lived curlimages/curl container on api_network.
 #           Exercises Docker DNS + bridge routing (same path nginx uses).
-# Fallback: docker exec <container> curl when the curl image cannot be pulled
-#           or Docker Hub is unreachable. Covers cold-VPS / egress-blocked cases.
+#           Works with distroless containers (no curl binary available).
 #
 # Usage: _ft_net_curl <container_name> <curl-flags...>
-#   The first argument is the container name — used ONLY for the fallback.
+#   The first argument is the container name — not used (kept for signature compat).
 #   Remaining arguments are passed verbatim to curl.
 _ft_net_curl() {
     local _target_container="$1"; shift
     # Primary: in-network (Docker DNS + bridge routing)
-    if docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" "$@" >/dev/null 2>&1; then
-        return 0
-    fi
-    # Fallback: exec into target container's loopback (skips Docker DNS but
-    # confirms HTTP server is alive inside the container)
-    docker exec "$_target_container" curl -sf --max-time 3 "$@" >/dev/null 2>&1
+    docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" "$@" >/dev/null 2>&1
 }
 # Variant that captures the response body or HTTP status code instead of
 # just testing. Used where we need the response text for status checks.
@@ -196,9 +192,7 @@ _ft_net_curl() {
 _ft_net_curl_out() {
     local _target_container="$1"; shift
     local _out
-    _out=$(docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" "$@" 2>/dev/null) \
-        || _out=$(docker exec "$_target_container" curl --max-time 3 "$@" 2>/dev/null) \
-        || _out=""
+    _out=$(docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" "$@" 2>/dev/null) || _out=""
     printf '%s' "$_out"
 }
 
@@ -659,11 +653,10 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
     # /ready can lag the HTTP server bind by ~1–3 s while workers start.
     sleep 2
 
-    # Bootstrap readiness: use docker exec (only safe choice when no other
-    # container is guaranteed to be running yet on api_network).
+    # Bootstrap readiness: use docker run (works with distroless containers).
     _BOOT_OK=false
     for _bi in $(seq 1 20); do
-        if docker exec api-blue curl -sf --max-time 4 "http://localhost:${APP_PORT}/ready" >/dev/null 2>&1; then
+        if docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" -sf --max-time 4 "http://api-blue:${APP_PORT}/ready" >/dev/null 2>&1; then
             _ft_log "msg='bootstrap: api-blue ready' attempt=$_bi"
             _BOOT_OK=true
             break
