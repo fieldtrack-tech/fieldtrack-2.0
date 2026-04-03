@@ -150,12 +150,29 @@ jobs:
             -f Dockerfile \
             .
 
+      - name: Guard — no docker exec curl in workflows
+        if: needs.detect-changes.outputs.api == 'true'
+        run: |
+          if grep -R "docker exec.*curl" .github/workflows; then
+            echo "❌ Forbidden pattern: docker exec curl detected in workflows"
+            exit 1
+          fi
+          echo "✅ No docker exec curl patterns found"
+
+      - name: Pull curl image
+        if: needs.detect-changes.outputs.api == 'true'
+        run: docker pull curlimages/curl:8.7.1
+
       - name: Container bootstrap validation
         if: needs.detect-changes.outputs.api == 'true'
         run: |
           # NO host port bindings — container runs on an isolated Docker bridge
-          # network. All checks use docker exec to reach the container directly,
-          # matching the production pattern (api_network / Docker DNS).
+          # network. All health checks and smoke tests run from an external
+          # curlimages/curl container on the same network (ci_api_net), matching
+          # production pattern (api_network / Docker DNS). The API image does NOT
+          # include curl; no tooling is assumed inside the container.
+          trap 'docker rm -f api-ci-test 2>/dev/null || true; docker network rm ci_api_net 2>/dev/null || true' EXIT
+
           docker network create ci_api_net
           docker run -d \
             --name api-ci-test \
@@ -188,10 +205,21 @@ jobs:
             -e SUPABASE_SERVICE_ROLE_KEY \
             fieldtrack-api:ci-validation
 
+          # Fail fast if container exited immediately
+          docker ps | grep api-ci-test || {
+            echo "❌ Container failed to start"
+            docker logs api-ci-test
+            exit 1
+          }
+
+          # External health probe — curlimages/curl on ci_api_net, no container tooling assumed
           STATUS="000"
           for i in $(seq 1 12); do
-            STATUS=$(docker exec api-ci-test \
-              curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health 2>/dev/null || echo "000")
+            STATUS=$(docker run --rm \
+              --network ci_api_net \
+              curlimages/curl:8.7.1 \
+              -s -o /dev/null -w "%{http_code}" \
+              http://api-ci-test:3000/health || echo "000")
             if [ "$STATUS" = "200" ]; then break; fi
             echo "Health check attempt $i: HTTP $STATUS — waiting..."
             sleep 2
@@ -199,9 +227,8 @@ jobs:
 
           if [ "$STATUS" != "200" ]; then
             echo "❌ /health returned HTTP $STATUS after 24 s (expected 200)"
+            echo "Container logs (last 50 lines):"
             docker logs api-ci-test --tail 50
-            docker rm -f api-ci-test || true
-            docker network rm ci_api_net || true
             exit 1
           fi
 
@@ -209,20 +236,20 @@ jobs:
 
           # Smoke tests: admin endpoints must reject unauthenticated requests with 401
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
-            ECODE=$(docker exec api-ci-test \
-              curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000${ENDPOINT}" 2>/dev/null || echo "000")
+            ECODE=$(docker run --rm \
+              --network ci_api_net \
+              curlimages/curl:8.7.1 \
+              -s -o /dev/null -w "%{http_code}" \
+              "http://api-ci-test:3000${ENDPOINT}" || echo "000")
             if [ "$ECODE" != "401" ]; then
               echo "❌ ${ENDPOINT} expected 401 (unauthenticated), got ${ECODE}"
+              echo "Container logs (last 50 lines):"
               docker logs api-ci-test --tail 50
-              docker rm -f api-ci-test || true
-              docker network rm ci_api_net || true
               exit 1
             fi
             echo "✓ ${ENDPOINT} → 401 (auth guard verified)"
           done
 
-          docker rm -f api-ci-test
-          docker network rm ci_api_net
           docker rmi fieldtrack-api:ci-validation
 
   # ---------------------------------------------------------------------------
