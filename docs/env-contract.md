@@ -35,8 +35,8 @@
 | `*_BASE_URL` | Full URL — scheme + host, **no trailing slash** | `https://api.getfieldtrack.app` |
 | `*_HOSTNAME` | Bare domain — **no scheme, no path** | `api.getfieldtrack.app` |
 
-**`API_HOSTNAME` is always DERIVED from `API_BASE_URL` at deploy-time by `load-env.sh`.**  
-It must **never** be set in `.env` — set it only in `infra/.env.monitoring`.
+**`API_HOSTNAME` is always DERIVED from `API_BASE_URL` at deploy-time by the deployment workflow/script.**  
+It must **never** be set in `.env` — set it only in the infra repository's `.env.monitoring`.
 
 ---
 
@@ -48,7 +48,7 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 
 | Variable | Required in Prod | Type | Purpose |
 |----------|:---:|------|---------|
-| `API_BASE_URL` | ✅ | `https://…` URL | **The canonical public URL of this API.** Used in OpenAPI server definitions and any server-generated links referencing the API itself. Also used by all deploy scripts and CI smoke tests. |
+| `API_BASE_URL` | ✅ | `https://…` URL | **The canonical public URL of this API.** Used in OpenAPI server definitions and any server-generated links referencing the API itself. Also used by deploy scripts and CI health checks. |
 | `APP_BASE_URL` | ✅ | `https://…` URL | Canonical root URL for the whole application. Used in email footers, OpenGraph canonical tags, and generic redirects that don't need to distinguish API vs frontend. |
 | `FRONTEND_BASE_URL` | ✅ | `https://…` URL | Public URL of the web frontend (maintained in a separate repository: `fieldtrack-tech/web`). Used to build password-reset and invitation email links. |
 
@@ -124,28 +124,22 @@ Validated by `src/config/env.ts` (Zod schema, fail-fast).
 
 ## CI / Scripts — GitHub Actions + Shell Scripts
 
-Variables consumed by `smoke-test.sh`, deploy scripts, and workflows.  
+Variables consumed by deploy scripts and workflows.  
 Stored as **GitHub repository secrets**.
 
 | Secret Name | Purpose | Used By |
 |------------|---------|---------|
-| `API_BASE_URL` | Full public URL of the API for health probes and smoke tests | `deploy.yml`, `smoke-test.sh` |
+| `API_BASE_URL` | Full public URL of the API for health probes | `deploy.yml`, `deploy.sh` |
 | `CORS_ORIGIN` | Allowed CORS origins for the deployed container | `deploy.yml` (pre-flight validation) |
 | `DO_HOST` | DigitalOcean VPS IP / hostname | SSH deploy steps |
 | `DO_USER` | SSH username on VPS | SSH deploy steps |
 | `DO_SSH_KEY` | SSH private key (PEM) | SSH deploy steps |
-| `FT_EMP_EMAIL` | Employee test account email | `smoke-test.sh` |
-| `FT_EMP_PASSWORD` | Employee test account password | `smoke-test.sh` |
-| `FT_ADMIN_EMAIL` | Admin test account email | `smoke-test.sh` |
-| `FT_ADMIN_PASSWORD` | Admin test account password | `smoke-test.sh` |
-| `SUPABASE_URL` | Supabase project URL (for smoke test auth) | `smoke-test.sh` |
-| `SUPABASE_ANON_KEY` | Supabase anon key (for smoke test auth) | `smoke-test.sh` |
 
 > **Renamed:** `FT_API_BASE_URL` → `API_BASE_URL`. Update the GitHub repo secret accordingly.
 
 ---
 
-## Infra — `infra/.env.monitoring`
+## Infra (standalone infra repository) — `.env.monitoring`
 
 Used by Docker Compose for Prometheus, Grafana, Nginx, Blackbox Exporter.
 
@@ -206,7 +200,7 @@ FRONTEND_BASE_URL=https://app.getfieldtrack.app
 CORS_ORIGIN=https://app.getfieldtrack.app
 METRICS_SCRAPE_TOKEN=<openssl rand -hex 32>
 
-# Infra (infra/.env.monitoring on VPS)
+# Infra (.env.monitoring in infra repo on VPS)
 API_HOSTNAME=api.getfieldtrack.app
 METRICS_SCRAPE_TOKEN=<same token as backend>
 GRAFANA_ADMIN_PASSWORD=<strong password>
@@ -217,12 +211,6 @@ CORS_ORIGIN=https://app.getfieldtrack.app
 DO_HOST=<vps-ip>
 DO_USER=ashish
 DO_SSH_KEY=<pem private key>
-FT_EMP_EMAIL=<smoke test employee>
-FT_EMP_PASSWORD=<smoke test employee password>
-FT_ADMIN_EMAIL=<smoke test admin>
-FT_ADMIN_PASSWORD=<smoke test admin password>
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=eyJ...
 ```
 
 ---
@@ -248,7 +236,7 @@ The following variables were **renamed** as part of the env contract cleanup (Ma
 
 | Old Name | New Name | Where |
 |----------|----------|-------|
-| `FT_API_BASE_URL` | `API_BASE_URL` | GitHub secrets, `smoke-test.sh`, `deploy.yml` |
+| `FT_API_BASE_URL` | `API_BASE_URL` | GitHub secrets, `deploy.yml` |
 
 **Action required:**
 1. Rename the GitHub repository secret `FT_API_BASE_URL` → `API_BASE_URL`

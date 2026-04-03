@@ -8,9 +8,8 @@ The rollback system provides instant production recovery by redeploying previous
 
 ### Components
 
-1. **deploy-bluegreen.sh** - Blue-green deployment script with deployment tracking
-2. **rollback.sh** - Automated rollback to previous deployment
-3. **.deploy_history** - Deployment history file storing the last 5 deployed image SHAs
+1. **deploy.sh** - Unified blue-green deployment and rollback script
+2. **.deploy_history** - Deployment history file storing the last 5 deployed image SHAs
 
 ### How It Works
 
@@ -23,8 +22,8 @@ The rollback system provides instant production recovery by redeploying previous
 2. Deploy script pulls image and performs blue-green deployment
 3. After successful deployment → prepends "a4f91c2" to .deploy_history
 4. History maintains last 5 deployments
-5. If deployment fails → rollback.sh reads line 2 from .deploy_history
-6. Rollback redeploys previous image using deploy-bluegreen.sh
+5. If deployment fails → `deploy.sh --rollback --auto` is triggered by CI
+6. Rollback redeploys previous image using `deploy.sh <sha>`
 ```
 
 ### Deployment Tracking
@@ -63,7 +62,7 @@ Deploy the latest image from CI:
 
 ```bash
 cd "$HOME/api"
-./scripts/deploy-bluegreen.sh a4f91c2
+./scripts/deploy.sh a4f91c2
 ```
 
 ### Rollback to Previous Version
@@ -72,7 +71,7 @@ Instantly restore the last working deployment:
 
 ```bash
 cd "$HOME/api"
-./scripts/rollback.sh
+./scripts/deploy.sh --rollback
 ```
 
 **Interactive output with history:**
@@ -99,10 +98,7 @@ Manually deploy any historical image:
 
 ```bash
 # Deploy a specific commit SHA
-./scripts/deploy-bluegreen.sh 7b3e9f1
-
-# Deploy a specific tag
-./scripts/deploy-bluegreen.sh v1.2.3
+./scripts/deploy.sh 7b3e9f1
 ```
 
 ## Safety Features
@@ -147,7 +143,7 @@ sudo systemctl reload nginx # Reload only if valid
 
 ```bash
 # Deploy new version
-./scripts/deploy-bluegreen.sh b8c4d2e
+./scripts/deploy.sh b8c4d2e
 
 # Health check fails → deployment aborted
 # Production still running previous version
@@ -158,7 +154,7 @@ sudo systemctl reload nginx # Reload only if valid
 
 ```bash
 # Deploy succeeds but issue discovered later
-./scripts/rollback.sh
+./scripts/deploy.sh --rollback
 
 # Confirms rollback
 # Redeploys previous image in <10 seconds
@@ -169,11 +165,11 @@ sudo systemctl reload nginx # Reload only if valid
 
 ```bash
 # Need to deploy a specific older version
-./scripts/deploy-bluegreen.sh 7b3e9f1
+./scripts/deploy.sh 7b3e9f1
 
 # Pulls specific image from GHCR
 # Performs blue-green deployment
-# Updates .last_deploy to 7b3e9f1
+# Prepends SHA to .deploy_history (rolling last 5)
 ```
 
 ## Integration with CI/CD
@@ -185,7 +181,7 @@ sudo systemctl reload nginx # Reload only if valid
   run: |
     ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
       "cd \"$HOME/api\" && \
-       ./scripts/deploy-bluegreen.sh ${{ env.SHA_SHORT }}"
+       ./scripts/deploy.sh ${{ env.SHA_SHORT }}"
 ```
 
 ### Deployment History
@@ -206,10 +202,9 @@ The history maintains the last 5 deployments in chronological order (newest firs
 ```
 $HOME/api/
 ├── scripts/
-│   ├── deploy-bluegreen.sh    # Blue-green deployment
-│   └── rollback.sh             # Rollback automation
-├── .deploy_history             # Last 5 deployment SHAs
-└── .env                        # Environment configuration
+│   └── deploy.sh             # Unified deploy + rollback
+├── .deploy_history           # Last 5 deployment SHAs
+└── .env                      # Environment configuration
 ```
 
 ## Troubleshooting
@@ -218,7 +213,7 @@ $HOME/api/
 
 ```bash
 # Make script executable
-chmod +x scripts/rollback.sh
+chmod +x scripts/deploy.sh
 ```
 
 ### No Deployment History
@@ -278,4 +273,3 @@ Potential improvements (not currently implemented):
 
 - [Blue-Green Deployment](./DEPLOYMENT.md)
 - [CI/CD Pipeline](.github/workflows/deploy.yml)
-- [VPS Setup](../scripts/vps-setup.sh)

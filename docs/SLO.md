@@ -1,6 +1,6 @@
 # FieldTrack Service Level Objectives (SLOs)
 
-This document defines the service-level objectives for FieldTrack production services.  Each SLO has a corresponding error budget and alert rules in `infra/prometheus/alerts.yml`.
+This document defines the service-level objectives for FieldTrack production services. Alert rules are implemented in the standalone infra repository.
 
 ---
 
@@ -19,7 +19,7 @@ This document defines the service-level objectives for FieldTrack production ser
 
 | | |
 |---|---|
-| **SLI** | `up{job=~"fieldtrack-api.*"}` |
+| **SLI** | HTTP availability measured from `up` metric on API containers |
 | **Target** | 99.9% monthly availability |
 | **Error budget** | 43.8 minutes / month |
 | **Window** | 30-day rolling |
@@ -33,7 +33,7 @@ Sub-1h monthly downtime budget is appropriate for a B2B scheduling SaaS.  Breach
 
 | | |
 |---|---|
-| **SLI** | `histogram_quantile(0.95, ...)` over `http_request_duration_seconds_bucket` |
+| **SLI** | p95 HTTP request duration (measured via `http_request_duration_seconds_bucket`) |
 | **Target p95** | < 500 ms |
 | **Target p99** | < 2 000 ms |
 | **Error budget** | 5% of requests may exceed the p95 threshold |
@@ -48,7 +48,7 @@ Sub-1h monthly downtime budget is appropriate for a B2B scheduling SaaS.  Breach
 
 | | |
 |---|---|
-| **SLI** | `rate(http_requests_total{status_code=~"5.."}[5m]) / rate(http_requests_total[5m])` |
+| **SLI** | Ratio of 5xx responses to total HTTP requests |
 | **Target** | < 1% 5xx error rate |
 | **Error budget** | 1% of requests may fail with 5xx |
 | **Window** | 5-minute rolling |

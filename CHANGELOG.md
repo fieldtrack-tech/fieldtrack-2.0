@@ -62,9 +62,9 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 - Every image is tagged with both `latest` and a 7-character SHA
 
 ### Rollback System (commits `35db851`, `23e7720`)
-- Added `backend/scripts/rollback.sh` — reads `.deploy_history`, validates ≥ 2 deployments, displays history table with current/target markers, prompts for confirmation, redeploys previous image using `deploy-bluegreen.sh`
-- Updated `backend/scripts/deploy-bluegreen.sh` to prepend the deployed SHA to `.deploy_history` (rolling window of 5) after every successful deploy
-- Added `backend/.gitignore` entry for `.deploy_history`
+- Added rollback mode to `scripts/deploy.sh` — reads `.deploy_history`, validates ≥ 2 deployments, displays history table with current/target markers, prompts for confirmation, and redeploys the previous image
+- Updated `scripts/deploy.sh` to prepend the deployed SHA to `.deploy_history` (rolling window of 5) after every successful deploy
+- Added `.gitignore` entry for `.deploy_history`
 - Added `docs/ROLLBACK_SYSTEM.md` and `docs/ROLLBACK_QUICKREF.md`
 
 ---
@@ -137,20 +137,14 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 - Added `otelMixin` in `src/config/logger.ts` — injects `trace_id`, `span_id`, `trace_flags` into every Pino log line
 - Added OTel span enrichment in `app.ts` `onRequest` hook — sets `http.route`, `http.client_ip`, `request.id`, `enduser.id` on every request
 - Upgraded Prometheus histogram to `observeWithExemplar()` with `traceId` on every observation
-- Updated `infra/docker-compose.monitoring.yml` — Tempo ports 4317/4318; Prometheus `--enable-feature=exemplar-storage`
-- Updated `infra/prometheus/prometheus.yml` — OpenMetrics scrape format for exemplar ingestion
+- Updated standalone infra repository monitoring config — Tempo ports 4317/4318; Prometheus `--enable-feature=exemplar-storage`
+- Updated standalone infra repository Prometheus config — OpenMetrics scrape format for exemplar ingestion
 
 ---
 
 ## [Phase 13] — Production Infrastructure: VPS, Nginx & Monitoring Stack — 2026
 
-- Added `backend/scripts/vps-setup.sh` — idempotent VPS provisioning (Docker, Nginx, systemd, certbot, ufw)
-- Added `infra/nginx/api.conf` — TLS termination, HTTP→HTTPS redirect, proxy headers, WebSocket upgrade, gzip
-- Added `infra/docker-compose.monitoring.yml` — Prometheus, Grafana, Loki, Promtail, Tempo on `api_network`
-- Added `infra/grafana/dashboards/fieldtrack.json` — pre-built dashboard (HTTP rate, latency, queue depth, heap, Redis)
-- Added `infra/grafana/provisioning/` — auto-provisioned dashboard and Prometheus datasource
-- Added `infra/prometheus/alerts.yml` — alert rules for API latency, queue depth, Redis connectivity, host metrics
-- Added `infra/promtail/promtail.yml` — Docker log discovery and shipping to Loki
+- Added VPS setup and infra assets for production infrastructure (later extracted into standalone infra repository)
 
 ---
 
@@ -167,7 +161,7 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 ## [Phase 11] — CI/CD Deployment Hardening — 2025
 
 - Added initial GitHub Actions workflow for automated deployment
-- Added `backend/scripts/deploy-bluegreen.sh` — blue-green zero-downtime deployment using Docker port-swap and Nginx upstream switch
+- Added blue-green zero-downtime deployment script (later unified into `scripts/deploy.sh`)
 - Health-check validation before traffic switch
 - Old container removed only after successful switchover
 

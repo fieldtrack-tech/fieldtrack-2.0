@@ -13,8 +13,7 @@
     "lint": "eslint src/modules --ext .ts",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "analytics:backfill": "tsx scripts/analytics-backfill.ts"
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",

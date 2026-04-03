@@ -5,18 +5,23 @@
 ### Deploy Latest Version
 ```bash
 cd "$HOME/api"
-./scripts/deploy-bluegreen.sh <SHA>
+./scripts/deploy.sh <SHA>
 ```
 
 ### Rollback to Previous Version
 ```bash
 cd "$HOME/api"
-./scripts/rollback.sh
+./scripts/deploy.sh --rollback
+```
+
+### Rollback (non-interactive, for CI)
+```bash
+./scripts/deploy.sh --rollback --auto
 ```
 
 ### Deploy Specific Version
 ```bash
-./scripts/deploy-bluegreen.sh 7b3e9f1
+./scripts/deploy.sh 7b3e9f1
 ```
 
 ## How It Works
@@ -61,7 +66,8 @@ cd "$HOME/api"
 
 ```
 ┌──────────────────┐
-│ ./rollback.sh    │
+│ ./deploy.sh      │
+│ --rollback       │
 └──────┬───────────┘
        │
        ▼
@@ -97,8 +103,7 @@ cd "$HOME/api"
 ```
 /api/
 ├── scripts/
-│   ├── deploy-bluegreen.sh
-│   └── rollback.sh
+│   └── deploy.sh           # Deploy and rollback
 └── .deploy_history (last 5 SHAs)
 ```
 
@@ -106,19 +111,15 @@ cd "$HOME/api"
 
 ```bash
 # Deploy new version
-$ ./scripts/deploy-bluegreen.sh b8c4d2e
-[1/7] Pulling image...
-[2/7] Detecting active container...
-[3/7] Starting inactive container...
-[4/7] Waiting for health check...
-[5/7] Switching nginx upstream...
-[6/7] Reloading nginx...
-[7/7] Cleaning old container...
-Deployment successful.
-Deployment history updated: b8c4d2e
+$ ./scripts/deploy.sh b8c4d2e
+[DEPLOY] state=PULL_IMAGE ...
+[DEPLOY] state=START_INACTIVE ...
+[DEPLOY] state=HEALTH_CHECK_INTERNAL ...
+[DEPLOY] state=SWITCH_NGINX ...
+[DEPLOY] state=SUCCESS duration_sec=18
 
 # Issue discovered - rollback
-$ ./scripts/rollback.sh
+$ ./scripts/deploy.sh --rollback
 Current deployment : b8c4d2e
 Previous deployment: a4f91c2
 
@@ -131,11 +132,7 @@ Deployment history:
 Current production will be replaced with: a4f91c2
 
 Continue with rollback? (yes/no): yes
-
-Starting rollback to image: a4f91c2
-[1/7] Pulling image...
-...
-Rollback completed successfully.
+[DEPLOY] state=SUCCESS duration_sec=9 msg=DEPLOY_SUCCESS
 Production is now running: a4f91c2
 ```
 
@@ -143,7 +140,7 @@ Production is now running: a4f91c2
 
 | Issue | Solution |
 |-------|----------|
-| Script not executable | `chmod +x scripts/rollback.sh` |
+| Script not executable | `chmod +x scripts/deploy.sh` |
 | No deployment history | Deploy at least once before rollback |
 | Insufficient history | Need at least 2 deployments to rollback |
 | Image not found | Verify SHA exists in GHCR |

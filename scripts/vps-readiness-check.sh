@@ -58,7 +58,7 @@ echo ""
 # ── CHECK 1: DEPLOY_ROOT exists ────────────────────────────────────────────────
 echo "--- CHECK 1: Deploy root directory ---"
 if [ ! -d "$DEPLOY_ROOT" ]; then
-  fail "DEPLOY_ROOT not found: $DEPLOY_ROOT — VPS may not be provisioned. Run vps-setup.sh first."
+  fail "DEPLOY_ROOT not found: $DEPLOY_ROOT — ensure infra bootstrap has been run and DEPLOY_ROOT is correct."
 fi
 ok "DEPLOY_ROOT exists: $DEPLOY_ROOT"
 
@@ -191,11 +191,6 @@ for f in "${REQUIRED_ENV_FILES[@]}"; do
   fi
 done
 
-# .env.monitoring is optional (monitoring-sync.sh self-heals from example)
-if [ ! -f "$DEPLOY_ROOT/infra/.env.monitoring" ]; then
-  warn ".env.monitoring not found — monitoring-sync.sh will create it from example during deploy."
-fi
-
 # ── CHECK 7: Runtime state directories ────────────────────────────────────────
 echo ""
 echo "--- CHECK 7: Runtime directories ---"
@@ -210,30 +205,14 @@ for dir in "$RUNTIME_DIR" "$LOG_DIR"; do
   fi
 done
 
-# ── CHECK 8: Nginx live config directory ──────────────────────────────────────
-echo ""
-echo "--- CHECK 8: Nginx live config directory ---"
-NGINX_LIVE_DIR="$DEPLOY_ROOT/infra/nginx/live"
-NGINX_BACKUP_DIR="$DEPLOY_ROOT/infra/nginx/backup"
-
-for dir in "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"; do
-  if [ ! -d "$dir" ]; then
-    warn "Nginx directory missing: $dir — creating it."
-    mkdir -p "$dir"
-    ok "Created: $dir"
-  else
-    ok "Directory exists: $dir"
-  fi
-done
-
-# ── CHECK 9: Network attachment for expected containers ───────────────────────
+# ── CHECK 8: Network attachment for expected containers ───────────────────────
 #
-# If nginx, prometheus, grafana, or alertmanager are running, they MUST be
+# If nginx is running, it MUST be
 # attached to api_network. If they're not, Docker DNS resolution will fail
 # and api-blue/api-green will be unreachable by name.
 echo ""
-echo "--- CHECK 9: Network attachment enforcement ---"
-NETWORK_REQUIRED=(nginx prometheus grafana alertmanager)
+echo "--- CHECK 8: Network attachment enforcement ---"
+NETWORK_REQUIRED=(nginx)
 for c in "${NETWORK_REQUIRED[@]}"; do
   if docker inspect "$c" >/dev/null 2>&1; then
     if ! docker inspect "$c" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' \
@@ -249,9 +228,9 @@ for c in "${NETWORK_REQUIRED[@]}"; do
   fi
 done
 
-# ── CHECK 10: Disk space (warn if < 2GB free) ──────────────────────────────────
+# ── CHECK 9: Disk space (warn if < 2GB free) ──────────────────────────────────
 echo ""
-echo "--- CHECK 10: Disk space ---"
+echo "--- CHECK 9: Disk space ---"
 FREE_KB=$(df -k / | awk 'NR==2 {print $4}')
 FREE_GB=$(awk "BEGIN {printf \"%.1f\", $FREE_KB/1024/1024}")
 if [ "$FREE_KB" -lt 2097152 ]; then

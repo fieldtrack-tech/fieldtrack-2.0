@@ -1,0 +1,44 @@
+services:
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Rendered nginx config — written by deploy script on each deploy
+      - ./nginx/live:/etc/nginx/conf.d:ro
+      # SSL certificates (managed by certbot on the host)
+      - /etc/ssl/api:/etc/ssl/api:ro
+      # ACME challenge webroot for certbot renewal
+      - /var/www/certbot:/var/www/certbot:ro
+      # Nginx access logs shared with promtail
+      - /var/log/nginx:/var/log/nginx
+
+    networks:
+      - api_network
+
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  api_network:
+    external: true

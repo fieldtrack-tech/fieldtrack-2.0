@@ -2,7 +2,7 @@
 //   - .env.example                      (developer template — every variable must appear here)
 //   - .github/workflows/pr.yml          (CI env: block — non-secret defaults for container bootstrap)
 //   - docs/env-contract.md              (source-of-truth documentation table)
-//   - scripts/validate-env.sh           (if monitoring-layer or cross-file validation needed)
+//   - scripts/deploy.sh                 (deploy-time environment validation)
 //
 // Failure to keep these in sync causes config drift, silent CI failures, and
 // environment contract violations caught only at production deploy time.
@@ -778,8 +778,9 @@ export function logStartupConfig(logger: MinimalLogger): void {
       appBaseUrl:      env.APP_BASE_URL      ?? "(unset)",
       apiBaseUrl:      env.API_BASE_URL      ?? "(unset)",
       // Bare hostname derived from apiBaseUrl — matches the API_HOSTNAME used
-      // by nginx, Prometheus, load-env.sh, and infra scripts. Logged here for
-      // cross-checking: if this value differs from infra/.env.monitoring, the
+      // by nginx and infra automation. Logged here for
+      // cross-checking: if this value differs from the infra repo's
+      // .env.monitoring, the
       // env contract is violated and deployment will fail validation.
       apiHostname:     env.API_BASE_URL      ? new URL(env.API_BASE_URL).host : "(unset)",
       frontendBaseUrl: env.FRONTEND_BASE_URL ?? "(unset)",

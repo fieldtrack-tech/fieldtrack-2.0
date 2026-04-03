@@ -1,7 +1,7 @@
 // FieldTrack 2.0 — OpenTelemetry tracing bootstrap
 //
-// This file MUST be imported as the very first import in server.ts so that
-// the SDK can wrap all subsequently-loaded modules (Fastify, HTTP, BullMQ).
+// Call initTelemetry() as the very first statement in server.ts so that the
+// SDK can patch all subsequently-used modules (Fastify, HTTP, BullMQ).
 //
 // Traces are shipped via OTLP HTTP to Grafana Tempo on the shared Docker
 // network. View them in: Grafana → Explore → Tempo → Search traces
@@ -48,4 +48,7 @@ const sdk = new NodeSDK({
     ],
 });
 
-sdk.start();
+/** Call once at process startup, before any Fastify/HTTP listener is created. */
+export function initTelemetry(): void {
+    sdk.start();
+}

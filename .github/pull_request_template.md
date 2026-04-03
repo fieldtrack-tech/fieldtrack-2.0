@@ -52,7 +52,7 @@ Closes #
 ## Final Checklist
 
 - [ ] PR title follows conventional commit format (`type(scope): description`)
-- [ ] Branch name follows convention (`feat/*`, `fix/*`, `infra/*`, etc.)
+- [ ] Branch name follows convention (`feat/*`, `fix/*`, `docs/*`, etc.)
 - [ ] No debug logs, commented-out code, or `TODO` / `FIXME` left in diff
 - [ ] No secrets or credentials committed
 - [ ] Relevant documentation updated (if applicable)

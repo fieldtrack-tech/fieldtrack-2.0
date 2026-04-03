@@ -2,6 +2,16 @@ import type { FastifyInstance } from "fastify";
 import { getConfigHash } from "../config/env.js";
 import { shouldStartWorkers, areWorkersStarted, getExpectedWorkerCount } from "../workers/startup.js";
 
+// Bootstrap flag: set to true only after Fastify has fully initialised
+// (plugins registered, routes attached, app.listen() resolved).
+// /health returns 503 until this is set — prevents the deploy gate from
+// treating a partially-initialised process as healthy.
+let isBootstrapped = false;
+
+export function setBootstrapped(): void {
+    isBootstrapped = true;
+}
+
 interface HealthResponse {
         status: string;
         timestamp: string;
@@ -50,7 +60,15 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
 
     app.get<{ Reply: HealthResponse }>("/health", {
         schema: { tags: ["health"] },
-    }, async () => {
+    }, async (_request, reply) => {
+        if (!isBootstrapped) {
+            await reply.status(503).send({
+                status: "starting",
+                timestamp: new Date().toISOString(),
+                config_hash: "",
+            });
+            return;
+        }
         return {
             status: "ok",
             timestamp: new Date().toISOString(),

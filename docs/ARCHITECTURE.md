@@ -99,33 +99,10 @@
 │                                                                           │
 └───────────────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    OBSERVABILITY LAYER                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐             │
-│  │  Prometheus  │───▶│   Grafana    │◀───│     Loki     │             │
-│  │   (Metrics)  │    │ (Dashboard)  │    │    (Logs)    │             │
-│  └──────────────┘    └──────────────┘    └──────────────┘             │
-│         ▲                                        ▲                       │
-│         │                                        │                       │
-│         │            ┌──────────────┐            │                       │
-│         └────────────│    Tempo     │────────────┘                       │
-│                      │  (Traces)    │                                    │
-│                      └──────────────┘                                    │
-│                             ▲                                            │
-│                             │                                            │
-│                             │ OpenTelemetry                              │
-│                             │                                            │
-└─────────────────────────────┼────────────────────────────────────────────┘
-                              │
-                              │
-                    ┌─────────┴─────────┐
-                    │                   │
-                    │  Fastify API      │
-                    │  (Instrumented)   │
-                    │                   │
-                    └───────────────────┘
+```
+
+> Monitoring stack (Prometheus, Grafana, Loki, Tempo) is managed by the **infra repository**.
+> The API exposes `/metrics` and OTLP traces, which the infra repo consumes.
 ```
 
 ## Component Details
@@ -158,12 +135,9 @@
   - Configurable concurrency (`WORKER_CONCURRENCY` env var)
   - Job retention limits: 1 000 completed, 5 000 failed (prevents Redis memory growth)
 
-### Observability Layer
-- **Prometheus**: Metrics collection and alerting
-- **Grafana**: Visualization dashboards
-- **Loki**: Log aggregation and querying
-- **Tempo**: Distributed tracing
-- **OpenTelemetry**: Unified instrumentation
+### Observability
+- The API emits metrics (Prometheus format on `/metrics`), structured logs (Pino/JSON), and traces (OpenTelemetry OTLP)
+- Collection, dashboards, and alerting are handled by the **infra repository**
 
 ## Data Flow
 
@@ -337,8 +311,8 @@ Fastify API
 │  Layer 4: Monitoring & Response                                          │
 │  ┌──────────────────────────────────────────────────────────────┐       │
 │  │  • Abuse detection logging                                   │       │
-│  │  • Prometheus alerting                                       │       │
-│  │  • Distributed tracing                                       │       │
+  │  • Alerting (handled by infra repository)                    │       │
+  │  • Distributed tracing (OpenTelemetry OTLP)                  │       │
 │  │  • Error tracking                                            │       │
 │  └──────────────────────────────────────────────────────────────┘       │
 │                                                                           │
@@ -367,10 +341,9 @@ Fastify API
 - **Compression**: @fastify/compress
 
 ### Observability
-- **Metrics**: Prometheus + prom-client
-- **Logs**: Pino + Loki
-- **Traces**: OpenTelemetry 2.x + Tempo
-- **Dashboards**: Grafana
+- **Metrics**: prom-client (exposed on `/metrics`, scraped by infra repo)
+- **Logs**: Pino (structured JSON, collected by infra repo)
+- **Traces**: OpenTelemetry 2.x (exported via OTLP to `TEMPO_ENDPOINT`)
 
 ### DevOps
 - **Containerization**: Docker (node:24-alpine)

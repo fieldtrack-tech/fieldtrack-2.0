@@ -18,3 +18,6 @@ process.env["SUPABASE_ANON_KEY"] ??= "test-anon-key-placeholder";
 process.env["REDIS_URL"] ??= "redis://localhost:6379";
 process.env["TEMPO_ENDPOINT"] ??= "http://localhost:4318";
 process.env["CORS_ORIGIN"] ??= "http://localhost:3000";
+// Disable OTel SDK in tests — prevents network dial-out and import-time
+// side effects caused by sdk.start() during module loading.
+process.env["OTEL_SDK_DISABLED"] = "true";

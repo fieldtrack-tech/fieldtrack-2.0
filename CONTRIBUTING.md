@@ -23,7 +23,6 @@ cp .env.example .env
 |---------|---------|---------|
 | New feature | `feature/<description>` | `feature/expense-attachments` |
 | Bug fix | `fix/<description>` | `fix/session-double-close` |
-| Infrastructure | `infra/<description>` | `infra/add-redis-tls` |
 | Documentation | `docs/<description>` | `docs/update-api-reference` |
 | Tests | `test/<description>` | `test/analytics-edge-cases` |
 | Chores / deps | `chore/<description>` | `chore/bump-fastify-5` |

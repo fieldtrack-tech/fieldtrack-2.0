@@ -1784,101 +1784,18 @@ Result: **0 errors** across all 3 utility files, 3 repositories, 2 services, 5 c
 
 ---
 
-## Phase 13 — Production Infrastructure: VPS, Nginx & Monitoring Stack
+## Phase 13 — Production Infrastructure (Moved)
 
-### Overview
+Infrastructure ownership was extracted from this API repository.
 
-Phase 13 moved FieldTrack 2.0 from a locally-runnable service to a fully operational production deployment. It introduced the VPS setup automation, Nginx reverse proxy, and a complete self-hosted observability stack (Prometheus + Grafana + Loki + Tempo).
+The following are now managed in the standalone infra repository:
+- VPS bootstrap and host setup
+- nginx reverse proxy configuration
+- Redis runtime service
+- monitoring stack (Prometheus, Grafana, Loki, Alertmanager, Promtail)
 
----
+This API repository now focuses on application code and deployment orchestration only.
 
-### 13.1 — VPS Setup Script
-
-**File:** `scripts/vps-setup.sh`
-
-A single idempotent script provisions a fresh Ubuntu VPS from zero to production-ready:
-
-- Installs Docker, Docker Compose, Nginx, and dependencies
-- Creates the `fieldtrack` OS user with limited permissions
-- Clones the repository and creates the directory structure
-- Configures the `systemd` service for auto-restart
-- Issues and renews TLS certificates via Let's Encrypt (`certbot`)
-- Sets up log rotation and minimal firewall rules (`ufw`)
-- Starts the monitoring stack alongside the application
-
----
-
-### 13.2 — Nginx Reverse Proxy
-
-**File:** `infra/nginx/api.conf`
-
-- Terminates TLS (HTTPS → HTTP to backend containers)
-- Upstream block points to the active blue/green container port
-- HTTP → HTTPS redirect on port 80
-- Proxy headers: `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`
-- WebSocket upgrade support (`Upgrade`, `Connection` headers)
-- Gzip compression for JSON responses
-- Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `HSTS`
-
----
-
-### 13.3 — Monitoring Stack
-
-**File:** `infra/docker-compose.monitoring.yml`
-
-Five services on the `api_network` Docker network:
-
-| Service | Port | Role |
-|---------|------|------|
-| `prometheus` | 9090 | Scrapes `/metrics` every 15 s; stores time-series |
-| `grafana` | 3001 | Dashboards, alerting, data-source wiring |
-| `loki` | 3100 | Log aggregation backend |
-| `promtail` | — | Reads Docker container logs; ships to Loki |
-| `tempo` | 3200 / 4317 / 4318 | Distributed trace storage; OTLP ingest |
-
----
-
-### 13.4 — Grafana Dashboard
-
-**File:** `infra/grafana/dashboards/fieldtrack.json`
-
-A provisioned Grafana dashboard covering:
-
-- HTTP request rate and error rate by route
-- p50/p95/p99 latency per endpoint
-- Node.js heap usage and event-loop lag
-- BullMQ queue depth and recalculation throughput
-- Active session count
-- Redis memory usage
-
-Dashboard is automatically loaded on container start via `infra/grafana/provisioning/`.
-
----
-
-### Files Created
-
-| File | Purpose |
-|------|----------|
-| `scripts/vps-setup.sh` | Full VPS provisioning from scratch |
-| `infra/docker-compose.monitoring.yml` | Prometheus, Grafana, Loki, Promtail, Tempo |
-| `infra/grafana/dashboards/fieldtrack.json` | Application dashboard (auto-provisioned) |
-| `infra/grafana/provisioning/dashboards/dashboard.yml` | Dashboard provisioning config |
-| `infra/grafana/provisioning/datasources/prometheus.yml` | Prometheus datasource provisioning |
-| `infra/nginx/api.conf` | Nginx reverse proxy and TLS termination |
-| `infra/prometheus/prometheus.yml` | Scrape config targeting backend `/metrics` |
-
----
-
-### Verification Results
-
-| Check | Result |
-|-------|--------|
-| VPS setup script idempotent | Can be re-run safely on existing VPS |
-| Nginx serves HTTPS | TLS via Let's Encrypt certbot |
-| Grafana auto-provisioned | Dashboard loads on container start |
-| Prometheus scrapes backend | `http_requests_total` visible in Grafana |
-
----
 
 ## Phase 14 — Distributed Tracing, Log Correlation & Metric Exemplars
 
@@ -1961,7 +1878,7 @@ httpRequestDuration.labels(labels).observeWithExemplar(
 
 Exemplars make individual high-latency data points "clickable" in Grafana: clicking a spike in the latency graph jumps directly to the Tempo trace for that exact request.
 
-Infrastructure requirements enabled in `docker-compose.monitoring.yml`:
+Infrastructure requirements enabled in the standalone infra repository:
 - Prometheus `--enable-feature=exemplar-storage` flag
 - Backend scraped with `Content-Type: application/openmetrics-text` (required for exemplar ingestion)
 
@@ -1972,11 +1889,9 @@ Infrastructure requirements enabled in `docker-compose.monitoring.yml`:
 | File | Action |
 |------|--------|
 | `src/tracing.ts` | **NEW** — OpenTelemetry SDK bootstrap; OTLP exporter to Tempo |
-| `src/server.ts` | **MODIFIED** — `import "./tracing.js"` as the very first import |
+| `src/server.ts` | **MODIFIED** — calls `initTelemetry()` at startup before app bootstrap |
 | `src/config/logger.ts` | **MODIFIED** — `otelMixin` injects trace/span IDs into every log line |
 | `src/plugins/prometheus.ts` | **MODIFIED** — exemplar support on duration histogram |
-| `infra/docker-compose.monitoring.yml` | **MODIFIED** — Tempo OTLP ports 4317/4318; Prometheus exemplar storage |
-| `infra/prometheus/prometheus.yml` | **MODIFIED** — OpenMetrics scrape protocol for backend jobs |
 | `src/app.ts` | **MODIFIED** — `onRequest` hook enriches active span with route pattern and request ID |
 
 ---
@@ -2372,7 +2287,7 @@ The pipeline is split into two jobs:
 
 ### Multi-Version Rollback System
 
-**Files:** `scripts/deploy-bluegreen.sh`, `scripts/rollback.sh`
+**File:** `scripts/deploy.sh`
 
 #### Deployment History
 
@@ -2391,19 +2306,19 @@ The history window is capped at the **last 5 deployments**.
 #### Rollback Procedure
 
 ```bash
-./scripts/rollback.sh
+./scripts/deploy.sh --rollback
 ```
 
 1. Reads `.deploy_history` — requires ≥ 2 entries
 2. Displays current and target versions with the full history
 3. Prompts for interactive confirmation: `Continue with rollback? (yes/no)`
-4. Calls `deploy-bluegreen.sh <previous-SHA>` to redeploy the previous image
+4. Calls `deploy.sh <previous-SHA>` to redeploy the previous image
 5. The previous image is already in GHCR — no rebuild, **< 10 seconds** end-to-end
 
 #### Deploy a Specific Historical Version
 
 ```bash
-./scripts/deploy-bluegreen.sh 7b3e9f1
+./scripts/deploy.sh 7b3e9f1
 ```
 
 Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
@@ -2415,8 +2330,7 @@ Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
 | File | Action |
 |------|--------|
 | `.github/workflows/deploy.yml` | **MODIFIED** — Split into `test` + `build-and-deploy` jobs; `npm ci`; `tsc --noEmit`; GHA cache |
-| `scripts/deploy-bluegreen.sh` | **MODIFIED** — Appends SHA to `.deploy_history`; maintains 5-entry window |
-| `scripts/rollback.sh` | **NEW** — Reads history, confirms, re-deploys previous image |
+| `scripts/deploy.sh` | **MODIFIED** — Unified deploy + rollback, appends SHA to `.deploy_history`; maintains 5-entry window |
 | `.gitignore` | **MODIFIED** — `.deploy_history` excluded |
 | `docs/ROLLBACK_SYSTEM.md` | **NEW** — Architecture, usage, troubleshooting guide |
 | `docs/ROLLBACK_QUICKREF.md` | **NEW** — Fast reference card for operators |

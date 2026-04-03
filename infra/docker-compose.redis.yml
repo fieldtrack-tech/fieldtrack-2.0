@@ -1,0 +1,38 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+
+    volumes:
+      - redis_data:/data
+
+    networks:
+      - api_network
+
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  api_network:
+    external: true
+
+volumes:
+  redis_data:
