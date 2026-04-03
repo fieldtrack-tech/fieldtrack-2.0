@@ -154,12 +154,13 @@ _log "msg='docker compose up -d complete'"
 # STEP 5 — VALIDATE: wait for required containers to become healthy
 #
 # Required containers (must be healthy for deploy to succeed):
-#   prometheus   — metrics collection (health: http://localhost:9090/-/healthy)
-#   alertmanager — alert routing      (health: http://localhost:9093/-/healthy)
-#   grafana      — dashboards         (health: http://localhost:3001/api/health)
+#   prometheus   — metrics collection (health: http://prometheus:9090/-/healthy)
+#   alertmanager — alert routing      (health: http://alertmanager:9093/-/healthy)
+#   grafana      — dashboards         (health: http://grafana:3000/api/health)
 #
-# Strategy: poll docker inspect for Health.Status.
+# Strategy: poll docker inspect for Health.Status via Docker service DNS.
 # Times out at 60 s per container (20 attempts × 3 s).
+# Note: Using service names (not localhost) because containers are in Docker network only.
 # ---------------------------------------------------------------------------
 
 _wait_container_healthy() {
@@ -265,14 +266,14 @@ MONITORING_ERRORS=0
 
 # ── Prometheus ──────────────────────────────────────────────────────────────
 if _wait_container_healthy "prometheus" 60 3; then
-    _check_endpoint "prometheus" "http://localhost:9090/-/healthy" || MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
+    _check_endpoint "prometheus" "http://prometheus:9090/-/healthy" || MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
 else
     MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
 fi
 
 # ── Alertmanager ─────────────────────────────────────────────────────────────
 if _wait_container_healthy "alertmanager" 60 3; then
-    _check_endpoint "alertmanager" "http://localhost:9093/-/healthy" || MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
+    _check_endpoint "alertmanager" "http://alertmanager:9093/-/healthy" || MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
 else
     MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
 fi
@@ -281,7 +282,7 @@ fi
 # Grafana may take longer to start; allow 60s timeout.
 if _wait_container_healthy "grafana" 60 3; then
     # Grafana health endpoint returns 200 with JSON when ready.
-    _check_endpoint "grafana" "http://localhost:3001/api/health" || MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
+    _check_endpoint "grafana" "http://grafana:3000/api/health" || MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
 else
     MONITORING_ERRORS=$((MONITORING_ERRORS + 1))
 fi
@@ -308,7 +309,7 @@ done
 # Query the Prometheus API to verify targets are UP.
 # ---------------------------------------------------------------------------
 _log "msg='validating prometheus scraping targets'"
-PROM_TARGETS=$(curl -s "http://localhost:9090/api/v1/targets" 2>/dev/null || echo "")
+PROM_TARGETS=$(curl -s "http://prometheus:9090/api/v1/targets" 2>/dev/null || echo "")
 
 if [ -z "$PROM_TARGETS" ]; then
     _log "level=WARN msg='prometheus API query failed — cannot validate scraping (proceeding with caution)'"
