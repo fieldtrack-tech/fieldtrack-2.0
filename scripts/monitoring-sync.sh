@@ -223,17 +223,22 @@ _wait_container_healthy() {
 }
 
 _check_endpoint() {
+    # Execute the health check INSIDE the container via docker exec.
+    # Monitoring containers live only on api_network and are NOT reachable via
+    # host-side DNS — their names (prometheus, alertmanager, grafana) only
+    # resolve from other containers on the same Docker network.
+    # Prefer wget (present in prom/* alpine images); fall back to curl (grafana).
     local name="$1"
     local url="$2"
 
-    local status
-    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo "000")
-
-    if [ "$status" = "200" ]; then
-        _log "msg='endpoint healthy' container=$name url=$url status=200"
+    if docker exec "$name" wget --spider -q "$url" >/dev/null 2>&1; then
+        _log "msg='endpoint healthy' container=$name url=$url"
+        return 0
+    elif docker exec "$name" curl -sf --max-time 5 "$url" >/dev/null 2>&1; then
+        _log "msg='endpoint healthy (curl)' container=$name url=$url"
         return 0
     else
-        _log "level=ERROR msg='endpoint unhealthy' container=$name url=$url status=$status"
+        _log "level=ERROR msg='endpoint unhealthy' container=$name url=$url"
         return 1
     fi
 }
@@ -309,7 +314,9 @@ done
 # Query the Prometheus API to verify targets are UP.
 # ---------------------------------------------------------------------------
 _log "msg='validating prometheus scraping targets'"
-PROM_TARGETS=$(curl -s "http://prometheus:9090/api/v1/targets" 2>/dev/null || echo "")
+# Use docker exec to query the Prometheus API from inside the container.
+# The prometheus container name is only resolvable within api_network, not from the host.
+PROM_TARGETS=$(docker exec prometheus wget -qO- "http://localhost:9090/api/v1/targets" 2>/dev/null || echo "")
 
 if [ -z "$PROM_TARGETS" ]; then
     _log "level=WARN msg='prometheus API query failed — cannot validate scraping (proceeding with caution)'"

@@ -393,41 +393,99 @@ fi
 # ============================================================================
 log "Phase 14: Starting monitoring stack..."
 
-# Stop system nginx — Docker nginx in the monitoring stack takes over ports 80/443.
-# System nginx is no longer needed after cert acquisition; Docker nginx handles
-# ACME challenge renewal via /var/www/certbot mount.
+# Stop system nginx — Docker nginx takes over ports 80/443 from this point.
+# System nginx is no longer needed after cert acquisition; the Docker nginx
+# container handles ACME challenge renewal via the /var/www/certbot mount.
 log "Phase 14a: Stopping system nginx (Docker nginx takes over)..."
 systemctl stop nginx || true
 systemctl disable nginx || true
 log "System nginx stopped and disabled."
 
+# Kill any docker-proxy ghost processes that may be holding host ports 80/443
+# from a previous failed start. pkill is a safe no-op if no process matches.
+pkill docker-proxy 2>/dev/null || true
+
+# Ensure api_network exists before starting compose (idempotent).
+# The compose file declares it as external; Docker will NOT create it automatically.
+if ! docker network ls --format '{{.Name}}' | grep -Eq "^${NETWORK}$"; then
+    docker network create --driver bridge "$NETWORK"
+    log "Docker network '$NETWORK' created before compose."
+else
+    log "Docker network '$NETWORK' already exists."
+fi
+
+# Ensure nginx live config dir and initial config exist before starting nginx,
+# so the container can mount the directory even before the first deploy runs.
+mkdir -p "$NGINX_LIVE_DIR"
+if [ ! -f "$NGINX_SITE_LINK" ]; then
+    sed \
+        -e "s|__ACTIVE_CONTAINER__|api-blue|g" \
+        -e "s|__API_HOSTNAME__|$DOMAIN|g" \
+        "$REPO_DIR/infra/nginx/api.conf" > "$NGINX_SITE_LINK"
+    log "Bootstrap nginx config written (pointing to api-blue) at $NGINX_SITE_LINK"
+fi
+
+# Start nginx FIRST using --no-deps to avoid being blocked by the
+# grafana → prometheus → alertmanager health-check dependency chain.
+# nginx uses deferred Docker DNS resolution so it starts cleanly without
+# needing any backend container to be up.
+log "Phase 14b: Starting Docker nginx (without dependency wait)..."
 cd "$REPO_DIR/infra"
+sudo -u "$DEPLOY_USER" docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml \
+    up -d --no-deps nginx
+log "Docker nginx container started."
+
+# Now start the rest of the monitoring stack (prometheus, alertmanager, grafana, etc.).
+log "Phase 14c: Starting full monitoring stack..."
 sudo -u "$DEPLOY_USER" docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d
+cd "$REPO_DIR"
 
-log "Monitoring stack started (Prometheus, Grafana, Node Exporter, Nginx)"
+log "Monitoring stack started (Prometheus, Alertmanager, Grafana, Loki, Promtail, Node Exporter, Nginx)"
 
 # ============================================================================
-# PHASE 15: First Deployment
+# PHASE 15: First Deployment (Bootstrap)
 # ============================================================================
-log "Phase 15: Pulling and starting initial backend container..."
+log "Phase 15: Starting bootstrap API container..."
+#
+# IMPORTANT: This phase uses :latest for the initial bootstrap ONLY.
+# :latest is the only available tag before any CI deploy has run.
+# After this script completes, every subsequent deploy uses a SHA-pinned
+# image (ghcr.io/fieldtrack-tech/api:<7-char-sha>) via deploy-bluegreen.sh.
+# Immutability is enforced from the first CI push onwards.
+#
+# NO HOST PORT BINDINGS — api-blue connects solely via api_network.
+# nginx routes to it via Docker DNS: server api-blue:3000.
 
-# Pull the latest image
 sudo -u "$DEPLOY_USER" docker pull ghcr.io/fieldtrack-tech/api:latest
 
-# Start the blue container as initial deployment
 if [ -f "$ENV_FILE" ] && grep -q "SUPABASE_URL=your-" "$ENV_FILE"; then
     warn "Skipping container start — .env still has placeholder values."
-    warn "After editing .env, run:"
-    warn "  cd $REPO_DIR && ./scripts/deploy-bluegreen.sh latest"
+    warn "After editing .env, push to master and let CI deploy, or run:"
+    warn "  cd $REPO_DIR && ./scripts/deploy-bluegreen.sh <sha>"
 else
+    # Remove a stale api-blue if it exists from a previous aborted attempt
+    if docker ps -a --format '{{.Names}}' | grep -Eq '^api-blue$'; then
+        docker stop --time 5 api-blue 2>/dev/null || true
+        docker rm api-blue 2>/dev/null || true
+        log "Removed stale api-blue container."
+    fi
+
+    # Start api-blue on api_network — NO -p / no host port binding.
     sudo -u "$DEPLOY_USER" docker run -d \
         --name api-blue \
         --network "$NETWORK" \
         --restart unless-stopped \
+        --label "api.slot=blue" \
+        --label "api.sha=latest-bootstrap" \
         --env-file "$ENV_FILE" \
         ghcr.io/fieldtrack-tech/api:latest
 
-    log "Backend container (api-blue) started (network: $NETWORK)."
+    log "Bootstrap container api-blue started (network: $NETWORK, no host ports)."
+
+    # Write the active-slot file so deploy-bluegreen.sh recovery finds it.
+    install -d -m 750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /var/run/api 2>/dev/null || true
+    echo "blue" > /var/run/api/active-slot
+    log "Active slot file written: blue"
 fi
 
 # ============================================================================

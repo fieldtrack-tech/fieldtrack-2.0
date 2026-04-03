@@ -224,9 +224,15 @@ services:
     networks:
       - api_network
 
+    # nginx can start as soon as the grafana *container* exists.
+    # Waiting for service_healthy would create a blocking chain:
+    #   nginx → grafana → prometheus → alertmanager
+    # which delays the ingress layer on fresh deployments by minutes.
+    # nginx uses deferred Docker DNS ($api_backend variable + resolver 127.0.0.11)
+    # so it starts cleanly before any backend container is ready.
     depends_on:
       grafana:
-        condition: service_healthy
+        condition: service_started
 
     deploy:
       resources:

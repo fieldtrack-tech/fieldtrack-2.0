@@ -5,8 +5,10 @@ on:
     branches:
       - master
 
+# Cancel stale runs for the same PR when new commits are pushed.
+# Uses workflow+ref so different PRs get independent concurrency groups.
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -155,9 +157,13 @@ jobs:
       - name: Container bootstrap validation
         if: needs.detect-changes.outputs.api == 'true'
         run: |
+          # NO host port bindings — container runs on an isolated Docker bridge
+          # network. All checks use docker exec to reach the container directly,
+          # matching the production pattern (api_network / Docker DNS).
+          docker network create ci_api_net
           docker run -d \
             --name api-ci-test \
-            -p 127.0.0.1:3001:3000 \
+            --network ci_api_net \
             -e CONFIG_VERSION \
             -e APP_ENV \
             -e NODE_ENV \
@@ -188,7 +194,8 @@ jobs:
 
           STATUS="000"
           for i in $(seq 1 12); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/health || echo "000")
+            STATUS=$(docker exec api-ci-test \
+              curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then break; fi
             echo "Health check attempt $i: HTTP $STATUS — waiting..."
             sleep 2
@@ -197,21 +204,29 @@ jobs:
           if [ "$STATUS" != "200" ]; then
             echo "❌ /health returned HTTP $STATUS after 24 s (expected 200)"
             docker logs api-ci-test --tail 50
+            docker rm -f api-ci-test || true
+            docker network rm ci_api_net || true
             exit 1
           fi
 
+          echo "✓ /health returned 200"
+
           # Smoke tests: admin endpoints must reject unauthenticated requests with 401
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
-            ECODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3001${ENDPOINT}" || echo "000")
+            ECODE=$(docker exec api-ci-test \
+              curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000${ENDPOINT}" 2>/dev/null || echo "000")
             if [ "$ECODE" != "401" ]; then
               echo "❌ ${ENDPOINT} expected 401 (unauthenticated), got ${ECODE}"
               docker logs api-ci-test --tail 50
+              docker rm -f api-ci-test || true
+              docker network rm ci_api_net || true
               exit 1
             fi
             echo "✓ ${ENDPOINT} → 401 (auth guard verified)"
           done
 
           docker rm -f api-ci-test
+          docker network rm ci_api_net
           docker rmi fieldtrack-api:ci-validation
 
   infra-ci:
@@ -261,3 +276,53 @@ jobs:
             -v /tmp/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
             -v /tmp/ssl:/etc/ssl/api:ro \
             nginx:1.27-alpine nginx -t
+
+  # ---------------------------------------------------------------------------
+  # JOB: codeql-lite
+  #
+  # Lightweight CodeQL security scan — runs in PARALLEL with api-ci and infra-ci.
+  # Uses security-extended queries (OWASP Top-10 class) for fast PR feedback.
+  # This job is REQUIRED in branch protection; PRs cannot merge until it passes.
+  #
+  # Job name "codeql-lite" is the required status check identifier.
+  # Branch protection setting: "PR Validation / codeql-lite"
+  # ---------------------------------------------------------------------------
+  codeql-lite:
+    name: CodeQL Lite (Security Scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["javascript"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js (match production)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API (enables data-flow tracing)
+        run: npm run build || true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "codeql-lite"

@@ -286,10 +286,11 @@ Nginx references LetsEncrypt certificates at `/etc/letsencrypt/live/<API_HOSTNAM
 4. Render and install the full SSL config from the template:
    ```bash
    sed \
-     -e "s|__BACKEND_PORT__|3001|g" \
+     -e "s|__ACTIVE_CONTAINER__|api-blue|g" \
      -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
-     infra/nginx/api.conf | sudo tee /etc/nginx/sites-enabled/api.conf
-   sudo nginx -t && sudo systemctl reload nginx
+     infra/nginx/api.conf > infra/nginx/live/api.conf
+   # nginx runs in Docker — reload via docker exec (no host nginx service):
+   docker exec nginx nginx -t && docker exec nginx nginx -s reload
    ```
 
 5. Enable auto-renewal (Certbot installs a systemd timer automatically on Ubuntu):
