@@ -35,6 +35,7 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
 NETWORK="api_network"
 RUNTIME_DIR="/var/lib/fieldtrack"
 LOG_DIR="/var/log/api"
+INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -204,6 +205,31 @@ for dir in "$RUNTIME_DIR" "$LOG_DIR"; do
     ok "Directory ready (writable): $dir"
   fi
 done
+
+# ── CHECK 7b: Infra nginx paths (deploy.sh writes live config + backups) ─────
+echo ""
+echo "--- CHECK 7b: Infra nginx directories (\$INFRA_ROOT=$INFRA_ROOT) ---"
+for d in "$INFRA_ROOT/nginx/live" "$INFRA_ROOT/nginx/backup"; do
+  if [ ! -d "$d" ]; then
+    warn "Missing $d — creating with sudo."
+    sudo install -d -m 755 "$d" 2>/dev/null || { record_failure "Cannot create directory: $d"; continue; }
+  fi
+  if [ ! -w "$d" ]; then
+    warn "Not writable by deploy user: $d — fixing ownership."
+    sudo chown "$(id -un):$(id -gn)" "$d" 2>/dev/null || true
+    sudo chmod u+rwx "$d" 2>/dev/null || true
+  fi
+  if [ ! -w "$d" ]; then
+    record_failure "Cannot write to $d — deploy will fail when updating nginx. Run: sudo chown -R $(id -un):$(id -gn) $d"
+  else
+    ok "Infra path ready (writable): $d"
+  fi
+done
+if [ ! -f "$INFRA_ROOT/nginx/api.conf" ]; then
+  record_failure "Missing nginx template: $INFRA_ROOT/nginx/api.conf (infra bootstrap required)"
+else
+  ok "Nginx template present: $INFRA_ROOT/nginx/api.conf"
+fi
 
 # ── CHECK 8: Network attachment enforcement ───────────────────────────────────
 #

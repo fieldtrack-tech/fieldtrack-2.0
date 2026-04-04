@@ -33,6 +33,9 @@
 # Deploy state (slot, lock, last-good):
 #   - FIELDTRACK_STATE_DIR or /var/lib/fieldtrack when writable (sudo chown if needed)
 #   - Otherwise $DEPLOY_ROOT/.fieldtrack; existing /var/lib/fieldtrack/* is migrated once
+#
+# Nginx config paths (INFRA_ROOT, default /opt/infra):
+#   - deploy user must write $INFRA_ROOT/nginx/live and nginx/backup (sudo mkdir+chown if needed)
 # =============================================================================
 set -euo pipefail
 if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
@@ -457,13 +460,39 @@ preflight() {
 }
 
 # ---------------------------------------------------------------------------
+# Infra nginx directories — deploy must write live + backup (not root-only /opt)
+# ---------------------------------------------------------------------------
+_ft_ensure_infra_nginx_dirs() {
+    local d
+    for d in "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"; do
+        if [ ! -d "$d" ]; then
+            _ft_log "msg='nginx dir missing, creating' path=$d"
+            if ! sudo mkdir -p "$d" 2>/dev/null; then
+                _ft_log "level=ERROR msg='cannot create nginx directory' path=$d"
+                return 1
+            fi
+        fi
+        if [ ! -w "$d" ]; then
+            _ft_log "msg='nginx dir not writable; fixing ownership' path=$d user=$(id -un)"
+            sudo chown "$(id -un):$(id -gn)" "$d" 2>/dev/null || true
+            sudo chmod u+rwx "$d" 2>/dev/null || true
+        fi
+        if [ ! -w "$d" ]; then
+            _ft_log "level=ERROR msg='nginx directory not writable after chown' path=$d user=$(id -un)"
+            return 1
+        fi
+    done
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # ensure_network — create api_network if absent (idempotent)
 # ---------------------------------------------------------------------------
 ensure_network() {
     docker network create --driver bridge "$NETWORK" 2>/dev/null \
         && _ft_log "msg='api_network created'" \
         || _ft_log "msg='api_network already exists'"
-    mkdir -p "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"
+    _ft_ensure_infra_nginx_dirs || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_nginx_dirs_not_writable"
 }
 
 # ---------------------------------------------------------------------------
@@ -780,7 +809,7 @@ switch_nginx() {
     _ft_state "SWITCH_NGINX" "msg='switching nginx upstream' container=$INACTIVE_NAME"
     sleep 2  # brief stabilization window before touching nginx
 
-    mkdir -p "$NGINX_BACKUP_DIR"
+    _ft_ensure_infra_nginx_dirs || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_nginx_dirs_not_writable"
     local backup tmp
     backup="$NGINX_BACKUP_DIR/api.conf.bak.$(date +%s)"
     tmp="$(mktemp /tmp/api-nginx.XXXXXX.conf)"
@@ -1157,7 +1186,7 @@ main() {
         health_check_internal
         # Write nginx config directly for first deploy, but keep the current
         # maintenance config as a rollback target for the routed verification.
-        mkdir -p "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"
+        _ft_ensure_infra_nginx_dirs || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_nginx_dirs_not_writable"
         if [ -f "$NGINX_CONF" ]; then
             cp "$NGINX_CONF" "$NGINX_BACKUP"
         fi
