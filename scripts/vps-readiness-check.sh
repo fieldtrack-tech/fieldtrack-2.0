@@ -230,6 +230,13 @@ if [ ! -f "$INFRA_ROOT/nginx/api.conf" ]; then
 else
   ok "Nginx template present: $INFRA_ROOT/nginx/api.conf"
 fi
+for compose in "$INFRA_ROOT/docker-compose.nginx.yml" "$INFRA_ROOT/docker-compose.redis.yml"; do
+  if [ ! -f "$compose" ]; then
+    record_failure "Missing compose file: $compose (expected under canonical INFRA_ROOT=$INFRA_ROOT)"
+  else
+    ok "Compose file present: $compose"
+  fi
+done
 
 # ── CHECK 8: Network attachment enforcement ───────────────────────────────────
 #
@@ -268,7 +275,7 @@ echo "--- CHECK 9: Nginx container ---"
 if ! docker inspect nginx >/dev/null 2>&1; then
   record_failure "nginx container not found — required for deployment routing."
   echo "  nginx must be running before deploy can proceed."
-  echo "  Fix: docker compose -f docker-compose.nginx.yml up -d"
+  echo "  Fix: cd \"$INFRA_ROOT\" && docker compose -f docker-compose.nginx.yml up -d"
 else
   ok "nginx container exists."
   # Advisory in-network health probe — nginx may return non-200 before

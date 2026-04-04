@@ -40,15 +40,16 @@ check_not_exists "$SCRIPT_DIR/analytics-backfill.ts"
 check_not_exists "$SCRIPT_DIR/load-testing"
 
 # Infra coupling guard (deployment/runtime paths only)
-# We only block local repo-relative infra paths (./infra or ../infra) in
-# executable/deploy code paths. External absolute paths like /opt/infra are allowed.
+# Block repo-relative ./infra/ or ../infra/ in scripts and src. Canonical server
+# layout is INFRA_ROOT=/opt/infra (see docs/infra-contract.md). Workflows are
+# not scanned here — they contain guard strings that mention ./infra/ by design.
 if grep -R -E "\.\./infra/|\./infra/" \
-  "$REPO_ROOT/scripts" "$REPO_ROOT/src" "$REPO_ROOT/.github/workflows" \
+  "$REPO_ROOT/scripts" "$REPO_ROOT/src" \
   --exclude="verify-stabilization.sh" \
   --binary-files=without-match --exclude-dir=node_modules --exclude-dir=.git >/dev/null; then
-  fail "Found local repo-relative infra coupling in scripts/src/workflows"
+  fail "Found local repo-relative infra coupling in scripts/ or src/"
 else
-  pass "No local repo-relative infra coupling found"
+  pass "No local repo-relative infra coupling in scripts/ or src/"
 fi
 
 # Deploy workflow guard

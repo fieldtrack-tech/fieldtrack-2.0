@@ -34,8 +34,11 @@
 #   - FIELDTRACK_STATE_DIR or /var/lib/fieldtrack when writable (sudo chown if needed)
 #   - Otherwise $DEPLOY_ROOT/.fieldtrack; existing /var/lib/fieldtrack/* is migrated once
 #
-# Nginx config paths (INFRA_ROOT, default /opt/infra):
-#   - deploy user must write $INFRA_ROOT/nginx/live and nginx/backup (sudo mkdir+chown if needed)
+# Canonical infra root on VPS: INFRA_ROOT=/opt/infra (default). All paths below use $INFRA_ROOT.
+# Nginx + compose files (all under INFRA_ROOT):
+#   - $INFRA_ROOT/nginx/live, nginx/backup (deploy user must be able to write live + backup)
+#   - $INFRA_ROOT/nginx/api.conf (template)
+#   - $INFRA_ROOT/docker-compose.nginx.yml, docker-compose.redis.yml (must exist; deploy does not start them)
 # =============================================================================
 set -euo pipefail
 if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
@@ -175,7 +178,7 @@ _ft_snapshot() {
         "$(cat "${SLOT_BACKUP_FILE:-/var/lib/fieldtrack/active-slot.backup}" 2>/dev/null || echo 'MISSING')" >&2
     printf '[DEPLOY]   nginx_upstream = %s\n' \
         "$(grep -oE 'http://(api-blue|api-green):3000' \
-            "${NGINX_CONF:-/opt/infra/nginx/live/api.conf}" 2>/dev/null \
+            "${NGINX_CONF:-${INFRA_ROOT:-/opt/infra}/nginx/live/api.conf}" 2>/dev/null \
             | grep -oE 'api-blue|api-green' | head -1 || echo 'unreadable')" >&2
     printf '[DEPLOY]   containers =\n' >&2
     docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 1>&2 2>/dev/null \
@@ -499,21 +502,29 @@ ensure_network() {
 # ensure_nginx — nginx MUST exist and be on api_network; hard fail otherwise
 # ---------------------------------------------------------------------------
 ensure_nginx() {
-    if [ ! -d "$INFRA_ROOT/nginx/live" ]; then
-        _ft_error "msg='infra not initialized at expected path' infra_root=$INFRA_ROOT required=$INFRA_ROOT/nginx/live"
+    if [ ! -d "$NGINX_LIVE_DIR" ]; then
+        _ft_error "msg='infra not initialized' infra_root=$INFRA_ROOT required=$NGINX_LIVE_DIR"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_not_initialized"
     fi
-    if [ ! -d "$INFRA_ROOT/nginx/backup" ]; then
-        _ft_error "msg='infra not initialized at expected path' infra_root=$INFRA_ROOT required=$INFRA_ROOT/nginx/backup"
+    if [ ! -d "$NGINX_BACKUP_DIR" ]; then
+        _ft_error "msg='infra not initialized' infra_root=$INFRA_ROOT required=$NGINX_BACKUP_DIR"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_not_initialized"
     fi
-    if [ ! -f "$INFRA_ROOT/nginx/api.conf" ]; then
-        _ft_error "msg='infra template missing' path=$INFRA_ROOT/nginx/api.conf"
+    if [ ! -f "$NGINX_TEMPLATE" ]; then
+        _ft_error "msg='infra template missing' path=$NGINX_TEMPLATE"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_template_missing"
+    fi
+    if [ ! -f "$INFRA_COMPOSE_NGINX" ]; then
+        _ft_error "msg='infra compose file missing' path=$INFRA_COMPOSE_NGINX"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_compose_nginx_missing"
+    fi
+    if [ ! -f "$INFRA_COMPOSE_REDIS" ]; then
+        _ft_error "msg='infra compose file missing' path=$INFRA_COMPOSE_REDIS"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=infra_compose_redis_missing"
     fi
 
     if ! docker inspect nginx >/dev/null 2>&1; then
-        _ft_error "msg='nginx container not found — nginx is managed by the infra repo' hint='docker compose -f docker-compose.nginx.yml up -d'"
+        _ft_error "msg='nginx container not found' infra_root=$INFRA_ROOT hint='docker compose -f $INFRA_COMPOSE_NGINX up -d'"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_missing"
     fi
     local net
@@ -1312,6 +1323,8 @@ NGINX_CONF="$INFRA_ROOT/nginx/live/api.conf"
 NGINX_LIVE_DIR="$INFRA_ROOT/nginx/live"
 NGINX_BACKUP_DIR="$INFRA_ROOT/nginx/backup"
 NGINX_TEMPLATE="$INFRA_ROOT/nginx/api.conf"
+INFRA_COMPOSE_NGINX="$INFRA_ROOT/docker-compose.nginx.yml"
+INFRA_COMPOSE_REDIS="$INFRA_ROOT/docker-compose.redis.yml"
 NGINX_BACKUP=""  # set inside switch_nginx()
 
 MAX_HISTORY=5

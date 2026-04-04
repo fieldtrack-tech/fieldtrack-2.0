@@ -147,12 +147,11 @@ All variables are validated at startup by `src/config/env.ts` (Zod schema, fail-
 
 This API requires an external infra repository.
 
-Expected on server:
-- nginx (connected to `api_network`)
-- Redis (`redis:6379`)
-
-Default path:
-- `INFRA_ROOT=/opt/infra`
+Expected on server (all under **`INFRA_ROOT=/opt/infra`**):
+- `$INFRA_ROOT/docker-compose.nginx.yml` — operator runs nginx from here
+- `$INFRA_ROOT/docker-compose.redis.yml` — operator runs Redis from here
+- `$INFRA_ROOT/nginx/live`, `nginx/backup`, `nginx/api.conf` — layout enforced by `deploy.sh` and readiness check
+- nginx container on `api_network`; Redis at `redis:6379` on `api_network`
 
 Deployments run automatically via GitHub Actions on every push to `master` (after CodeQL scan passes).
 

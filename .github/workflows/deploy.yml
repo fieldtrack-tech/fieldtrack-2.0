@@ -710,6 +710,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             # Pull latest scripts without full deploy
@@ -775,6 +776,7 @@ jobs:
             set -euo pipefail
             T0=$(date +%s)
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             # Enforce repo is at the exact SHA being deployed (issue 7 — prevents
@@ -794,6 +796,7 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             DEPLOY_STATUS="UNKNOWN"
@@ -836,6 +839,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
 
@@ -914,6 +918,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             API_BASE_URL=$(grep -E '^API_BASE_URL=' .env 2>/dev/null | head -1 | cut -d'=' -f2- || true)
@@ -951,6 +956,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             API_BASE_URL=$(grep -E '^API_BASE_URL=' .env 2>/dev/null | head -1 | cut -d'=' -f2- || true)
@@ -992,6 +998,7 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             FT_CURL_IMG="curlimages/curl:8.7.1"
@@ -1062,6 +1069,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            export INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             chmod +x scripts/*.sh

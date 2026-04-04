@@ -1,3 +1,5 @@
+# Canonical on server: INFRA_ROOT=/opt/infra — place this file at $INFRA_ROOT/docker-compose.nginx.yml
+# Volume ./nginx/live is relative to this file (→ $INFRA_ROOT/nginx/live when deployed).
 services:
 
   nginx:
