@@ -287,6 +287,12 @@ jobs:
 
           echo "✓ /health returned 200"
 
+          # Same binary + script path as Docker HEALTHCHECK (exec form); catches ESM/require
+          # regressions and confirms 127.0.0.1:3000/health from inside the container.
+          echo "Validating /app/healthcheck.js (ESM, distroless node)..."
+          docker exec api-ci-test /nodejs/bin/node /app/healthcheck.js
+          echo "✓ healthcheck.js exited 0"
+
           # Smoke tests: admin endpoints must reject unauthenticated requests with 401
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
             ECODE=$(docker run --rm \
@@ -540,6 +546,10 @@ jobs:
             docker logs api-blue --tail 50
             exit 1
           fi
+
+          echo "Validating /app/healthcheck.js (same as Docker HEALTHCHECK)..."
+          docker exec api-blue /nodejs/bin/node /app/healthcheck.js
+          echo "✓ healthcheck.js exited 0"
 
           # Smoke: auth guards must reject unauthenticated requests with 401.
           for ENDPOINT in /admin/audit-log /admin/webhook-dlq; do
