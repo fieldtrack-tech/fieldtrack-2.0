@@ -4,8 +4,10 @@ import { shouldStartWorkers, areWorkersStarted, getExpectedWorkerCount } from ".
 
 // Bootstrap flag: set to true only after Fastify has fully initialised
 // (plugins registered, routes attached, app.listen() resolved).
-// /health returns 503 until this is set — prevents the deploy gate from
-// treating a partially-initialised process as healthy.
+// /health returns 503 until this is set — prevents the deploy gate and Docker
+// HEALTHCHECK (127.0.0.1:3000/health) from treating a partial boot as healthy.
+// /ready is separate: deep checks (Redis, Supabase, queues) — never use it for
+// Docker HEALTHCHECK or deploy.sh; workers must not block liveness.
 let isBootstrapped = false;
 
 export function setBootstrapped(): void {

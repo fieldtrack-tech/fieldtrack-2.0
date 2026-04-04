@@ -217,19 +217,33 @@ _ft_final_state() {
 # ---------------------------------------------------------------------------
 # DOCKER HEALTH GATE
 # ---------------------------------------------------------------------------
+_ft_dump_container_health_json() {
+    local name="$1"
+    local json
+    json=$(docker inspect "$name" --format '{{json .State.Health}}' 2>/dev/null || echo "{}")
+    _ft_log "msg='State.Health (docker inspect)' container=$name json=$json"
+}
+
 _ft_wait_docker_health() {
     local name="$1" i=1 STATUS
-    while [ "$i" -le 30 ]; do
+    # Allow start-period (30s) + several intervals (10s) + retries — 45×2s ≈ 90s
+    local max_attempts=45
+    while [ "$i" -le "$max_attempts" ]; do
         STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$name" 2>/dev/null || echo "none")
         case "$STATUS" in
             healthy)   _ft_log "msg='docker health check passed' container=$name"; return 0 ;;
-            unhealthy) _ft_error "msg='docker health check failed' container=$name status=unhealthy"; return 1 ;;
+            unhealthy)
+                _ft_error "msg='docker health check failed' container=$name status=unhealthy"
+                _ft_dump_container_health_json "$name"
+                return 1
+                ;;
             none)      _ft_error "msg='docker HEALTHCHECK not found — add HEALTHCHECK to Dockerfile; required for deploy gate' container=$name status=none"; return 1 ;;
         esac
-        [ $(( i % 5 )) -eq 0 ] && _ft_log "msg='waiting for docker health' attempt=$i/30 status=$STATUS container=$name"
+        [ $(( i % 5 )) -eq 0 ] && _ft_log "msg='waiting for docker health' attempt=$i/$max_attempts status=$STATUS container=$name"
         sleep 2; i=$(( i + 1 ))
     done
     _ft_error "msg='docker health timeout' container=$name last_status=$STATUS"
+    _ft_dump_container_health_json "$name"
     return 1
 }
 

@@ -1,20 +1,43 @@
-// Lightweight health probe for distroless containers (no curl available).
-// Runs as the HEALTHCHECK CMD: /nodejs/bin/node /app/healthcheck.js
-// Exits 0 when /health returns HTTP 200, exits 1 on any error or non-200 response.
-//
-// CommonJS (not ESM) — this file is copied to /app/healthcheck.js in the
-// container where the repo root package.json (no "type":"module") applies.
+// Distroless-compatible liveness probe (no curl). Semantics align with:
+//   curl -fsS http://127.0.0.1:3000/health || exit 1
+// - 127.0.0.1 + IPv4 only (avoid ::1 / dual-stack quirks)
+// - exit 0 only on HTTP 200; any other status or error → exit 1
+// - bounded wall time < Docker --timeout (5s)
 'use strict';
+
 const http = require('http');
 
-const req = http.request(
-  { host: '127.0.0.1', port: 3000, path: '/health', method: 'GET' },
-  (res) => {
-    process.exitCode = res.statusCode === 200 ? 0 : 1;
-    res.resume(); // drain response so socket closes cleanly
+const TIMEOUT_MS = 4500;
+let settled = false;
+
+function finish(code) {
+  if (settled) {
+    return;
   }
+  settled = true;
+  process.exit(code);
+}
+
+const req = http.request(
+  {
+    host: '127.0.0.1',
+    port: 3000,
+    path: '/health',
+    method: 'GET',
+    family: 4,
+  },
+  (res) => {
+    res.on('data', () => {});
+    res.on('end', () => {
+      finish(res.statusCode === 200 ? 0 : 1);
+    });
+    res.on('error', () => finish(1));
+  },
 );
 
-req.on('error', () => { process.exitCode = 1; });
-req.setTimeout(4000, () => { req.destroy(); process.exitCode = 1; });
+req.on('error', () => finish(1));
+req.setTimeout(TIMEOUT_MS, () => {
+  req.destroy();
+  finish(1);
+});
 req.end();

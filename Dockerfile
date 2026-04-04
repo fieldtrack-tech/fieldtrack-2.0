@@ -11,7 +11,9 @@
 #     No shell, no package manager, no tar, no apt, no curl — the entire OS toolchain
 #     CVE surface present in bookworm-slim is eliminated.
 #   • :nonroot variant runs as uid 65532 (nobody) by default — no USER directive needed.
-#   • HEALTHCHECK uses Node built-in `http` module (curl unavailable in distroless).
+#   • HEALTHCHECK uses Node http (distroless has no curl). Equivalent to:
+#       curl -fsS http://127.0.0.1:3000/health || exit 1
+#     Use /health (liveness) only — not /ready (Redis/DB); deploy gate matches this.
 
 # ---- Stage 1: Build --------------------------------------------------------
 # Pinned to specific version to prevent supply chain attacks.
@@ -80,7 +82,9 @@ COPY healthcheck.js ./healthcheck.js
 EXPOSE 3000
 
 # Exec-form required — distroless has no shell to expand shell-form commands.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+# start-period must cover cold start (OTel, env, Fastify listen); interval allows
+# timely transition starting → healthy once /health returns 200.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
   CMD ["/nodejs/bin/node", "/app/healthcheck.js"]
 
 CMD ["dist/server.js"]
