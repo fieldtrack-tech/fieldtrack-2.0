@@ -94,11 +94,14 @@ Default `INFRA_ROOT` on server: `/opt/infra`
 
 ## External Dependencies (infra repo)
 
-Required paths under `INFRA_ROOT=/opt/infra`:
+Required layout under **`INFRA_ROOT=/opt/infra`** (canonical; scripts default to this path):
+
 ```
-$INFRA_ROOT/nginx/live/          (directory, created by infra)
-$INFRA_ROOT/nginx/backup/        (directory, created by infra)
-$INFRA_ROOT/nginx/api.conf       (template, managed by infra)
+$INFRA_ROOT/nginx/live/                    (directory — deploy writes live api.conf)
+$INFRA_ROOT/nginx/backup/                  (directory — rolling backups)
+$INFRA_ROOT/nginx/api.conf                 (template with placeholders — infra managed)
+$INFRA_ROOT/docker-compose.nginx.yml      (operator starts nginx from here)
+$INFRA_ROOT/docker-compose.redis.yml       (operator starts redis from here)
 ```
 
-The API deploy script (`scripts/deploy.sh`) fails fast if these are absent.
+The API deploy script (`scripts/deploy.sh`) and `scripts/vps-readiness-check.sh` fail fast if these paths are missing. Compose files are not executed by deploy; they must exist so operators (and checks) know the canonical layout.
