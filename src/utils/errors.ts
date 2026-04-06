@@ -19,30 +19,37 @@ export class AppError extends Error {
 }
 
 export class UnauthorizedError extends AppError {
-    constructor(message = "Unauthorized") {
-        super(message, 401);
+    constructor(message = "Unauthorized", code = "UNAUTHORIZED") {
+        super(message, 401, code);
         this.name = "UnauthorizedError";
     }
 }
 
 export class NotFoundError extends AppError {
-    constructor(message = "Resource not found") {
-        super(message, 404);
+    constructor(message = "Resource not found", code = "NOT_FOUND") {
+        super(message, 404, code);
         this.name = "NotFoundError";
     }
 }
 
 export class BadRequestError extends AppError {
-    constructor(message = "Bad request") {
-        super(message, 400);
+    constructor(message = "Bad request", code = "VALIDATION_ERROR") {
+        super(message, 400, code);
         this.name = "BadRequestError";
     }
 }
 
 export class ForbiddenError extends AppError {
-    constructor(message = "Forbidden") {
-        super(message, 403);
+    constructor(message = "Forbidden", code = "FORBIDDEN") {
+        super(message, 403, code);
         this.name = "ForbiddenError";
+    }
+}
+
+export class ProfileNotFoundError extends NotFoundError {
+    constructor(message = "No employee profile linked") {
+        super(message, "PROFILE_NOT_FOUND");
+        this.name = "ProfileNotFoundError";
     }
 }
 

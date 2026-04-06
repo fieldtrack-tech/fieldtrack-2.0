@@ -16,11 +16,13 @@ import { adminMapRoutes } from "../modules/admin/map.routes.js";
 import { webhookDlqRoutes } from "../modules/admin/webhook-dlq.routes.js";
 import { eventsRoutes } from "./events.routes.js";
 import { webhooksRoutes } from "../modules/webhooks/webhooks.routes.js";
+import { authRoutes } from "../modules/auth/auth.routes.js";
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(healthRoutes);
   await app.register(internalRoutes);
   await app.register(debugRoutes);
+  await app.register(authRoutes);
   await app.register(attendanceRoutes);
   await app.register(locationsRoutes);
   await app.register(expensesRoutes);
