@@ -13,20 +13,27 @@ const profileStatsSchema = z.object({
   expensesApproved: z.number(),
 });
 
-const profileResponseSchema = z.object({
-  success: z.literal(true),
-  data: z.object({
-    id: z.string(),
-    name: z.string(),
-    employee_code: z.string().nullable(),
-    phone: z.string().nullable(),
-    is_active: z.boolean(),
-    activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]),
-    last_activity_at: z.string().nullable(),
-    created_at: z.string(),
-    stats: profileStatsSchema,
-  }) satisfies z.ZodType<EmployeeProfileData>,
-});
+const profileResponseSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    data: z.object({
+      id: z.string(),
+      name: z.string(),
+      employee_code: z.string().nullable(),
+      phone: z.string().nullable(),
+      is_active: z.boolean(),
+      activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]),
+      last_activity_at: z.string().nullable(),
+      created_at: z.string(),
+      stats: profileStatsSchema,
+    }) satisfies z.ZodType<EmployeeProfileData>,
+  }),
+  z.object({
+    success: z.literal(true),
+    data: z.null(),
+    meta: z.object({ hasProfile: z.literal(false) }),
+  }),
+]);
 
 /**
  * Profile routes — employee self-profile and admin employee profile lookup.

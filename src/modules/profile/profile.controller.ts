@@ -6,6 +6,10 @@ export const profileController = {
   /**
    * GET /profile/me
    * Employee's own profile.
+   *
+   * Returns 200 {data: null, meta: {hasProfile: false}} for ADMIN users and
+   * any auth'd user without a linked employee row.  A missing profile is NOT
+   * an authentication or authorisation failure.
    */
   async getMyProfile(
     request: FastifyRequest,
@@ -13,6 +17,16 @@ export const profileController = {
   ): Promise<void> {
     try {
       const data = await profileService.getMyProfile(request);
+
+      if (data === null) {
+        reply.status(200).send({
+          success: true,
+          data: null,
+          meta: { hasProfile: false },
+        });
+        return;
+      }
+
       reply.status(200).send(ok(data));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error in getMyProfile");

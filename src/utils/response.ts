@@ -81,11 +81,11 @@ export function handleError(
     const message = error.issues.map((i) => i.message).join("; ");
     void reply
       .status(400)
-      .send(fail(`Validation failed: ${message}`, request.id));
+      .send(fail(`Validation failed: ${message}`, request.id, "VALIDATION_ERROR"));
     throw error;
   }
 
   request.log.error({ err: error }, context);
-  void reply.status(500).send(fail("Internal server error", request.id));
+  void reply.status(500).send(fail("Internal server error", request.id, "INTERNAL_ERROR"));
   throw error;
 }

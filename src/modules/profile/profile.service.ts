@@ -1,17 +1,22 @@
 import type { FastifyRequest } from "fastify";
 import { profileRepository, computeActivityStatusFromTimestamp } from "./profile.repository.js";
-import { NotFoundError, ForbiddenError } from "../../utils/errors.js";
+import { NotFoundError } from "../../utils/errors.js";
 import type { EmployeeProfileData } from "../../types/shared.js";
 
 export const profileService = {
   /**
    * Get the requesting employee's own profile.
-   * Requires an employee context (request.employeeId).
+   *
+   * Returns null when the authenticated user has no linked employee row
+   * (valid state for ADMIN users).  Callers must treat null as a 200
+   * "no profile" state — NOT as an authentication or authorisation failure.
    */
-  async getMyProfile(request: FastifyRequest): Promise<EmployeeProfileData> {
+  async getMyProfile(request: FastifyRequest): Promise<EmployeeProfileData | null> {
     const employeeId = request.employeeId;
     if (!employeeId) {
-      throw new ForbiddenError("No employee profile linked to this account");
+      // ADMIN users (and any auth'd user without an employee row) have no profile.
+      // This is semantically correct — missing profile ≠ auth failure.
+      return null;
     }
 
     return this.getEmployeeProfile(request, employeeId);
