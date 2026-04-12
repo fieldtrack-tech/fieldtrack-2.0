@@ -10,6 +10,10 @@ import { z } from "zod";
 // ─── Event type constants ────────────────────────────────────────────────────
 
 export const WEBHOOK_EVENT_TYPES = [
+  // Canonical event names (product-facing)
+  "session.checkin",
+  "session.checkout",
+  // Backward-compatible aliases used by existing integrations
   "employee.checked_in",
   "employee.checked_out",
   "expense.created",
@@ -79,9 +83,11 @@ export const webhookDeliverySchema = z.object({
   id:              z.string().uuid(),
   webhook_id:      z.string().uuid(),
   event_id:        z.string().uuid(),
+  event_type:      z.string().nullable(),
   organization_id: z.string().uuid(),
   status:          z.enum(["pending", "success", "failed"]),
   attempt_count:   z.number(),
+  response_code:   z.number().nullable(),
   response_status: z.number().nullable(),
   response_body:   z.string().nullable(),
   last_attempt_at: z.string().nullable(),
@@ -89,6 +95,15 @@ export const webhookDeliverySchema = z.object({
   created_at:      z.string(),
 });
 export type WebhookDelivery = z.infer<typeof webhookDeliverySchema>;
+
+export const webhookTestResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    delivery_id: z.string().uuid(),
+    event_id: z.string().uuid(),
+    status: z.enum(["pending"]),
+  }),
+});
 
 export const webhookDlqDeliverySchema = z.object({
   id:              z.string().uuid(),

@@ -81,6 +81,25 @@ export type EventDataMap = {
   // ── Attendance ─────────────────────────────────────────────────────────────
 
   /**
+   * Canonical session check-in event name.
+   */
+  "session.checkin": {
+    employee_id: string;
+    session_id: string;
+    checkin_at: string;
+  };
+
+  /**
+   * Canonical session check-out event name.
+   */
+  "session.checkout": {
+    employee_id: string;
+    session_id: string;
+    checkin_at: string;
+    checkout_at: string;
+  };
+
+  /**
    * Fired immediately after a new attendance session is created (check-in).
    *
    * Contains: who checked in, which session, and when — sufficient for a

@@ -80,6 +80,16 @@ export const attendanceService = {
       },
     });
 
+    // Canonical webhook event name (kept alongside legacy alias for compatibility)
+    emitEvent("session.checkin", {
+      organization_id: request.organizationId,
+      data: {
+        employee_id: employeeId,
+        session_id: session.id,
+        checkin_at: session.checkin_at,
+      },
+    });
+
     return session;
   },
 
@@ -126,6 +136,17 @@ export const attendanceService = {
     });
 
     emitEvent("employee.checked_out", {
+      organization_id: request.organizationId,
+      data: {
+        employee_id: employeeId,
+        session_id: closedSession.id,
+        checkin_at: closedSession.checkin_at,
+        checkout_at: closedSession.checkout_at ?? new Date().toISOString(),
+      },
+    });
+
+    // Canonical webhook event name (kept alongside legacy alias for compatibility)
+    emitEvent("session.checkout", {
       organization_id: request.organizationId,
       data: {
         employee_id: employeeId,

@@ -60,6 +60,8 @@ vi.mock("../../../src/modules/webhooks/webhooks.repository.js", () => ({
     findDeliveryById:      vi.fn(),
     findWebhookSecretById: vi.fn(),
     resetDeliveryForRetry: vi.fn(),
+    createEvent:           vi.fn(),
+    createDelivery:        vi.fn(),
   },
 }));
 
@@ -115,9 +117,11 @@ const deliveryRow = {
   id:               DELIVERY_ID,
   webhook_id:       WEBHOOK_ID,
   event_id:         EVENT_ID,
+  event_type:       "expense.created",
   organization_id:  TEST_ORG_ID,
   status:           "failed" as const,
   attempt_count:    3,
+  response_code:    500,
   response_status:  500,
   response_body:    "Internal Server Error",
   last_attempt_at:  now,
@@ -429,6 +433,28 @@ describe("Webhooks Admin API", () => {
     });
   });
 
+  // ─── GET /admin/webhooks/logs (alias) ─────────────────────────────────────
+
+  describe("GET /admin/webhooks/logs", () => {
+    it("returns paginated delivery logs", async () => {
+      vi.mocked(webhooksRepository.listDeliveries).mockResolvedValueOnce({
+        data: [deliveryRow],
+        total: 1,
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/admin/webhooks/logs",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{ success: boolean; data: Array<typeof deliveryRow> }>();
+      expect(body.success).toBe(true);
+      expect(body.data[0].event_type).toBe("expense.created");
+    });
+  });
+
   // ─── GET /admin/webhook-dlq ────────────────────────────────────────────────
 
   describe("GET /admin/webhook-dlq", () => {
@@ -617,6 +643,37 @@ describe("Webhooks Admin API", () => {
         url:    `/admin/webhook-deliveries/${DELIVERY_ID}/retry`,
       });
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // ─── POST /admin/webhooks/:id/test ────────────────────────────────────────
+
+  describe("POST /admin/webhooks/:id/test", () => {
+    it("enqueues a test delivery", async () => {
+      const { enqueueWebhookDelivery } = await import("../../../src/workers/webhook.queue.js");
+      const webhookWithSecret = {
+        id: WEBHOOK_ID,
+        url: "https://example.com/hook",
+        secret: "s3cr3t_value_long_enough",
+      };
+
+      vi.mocked(webhooksRepository.findWebhookSecretById).mockResolvedValueOnce(webhookWithSecret);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked((webhooksRepository as any).createEvent).mockResolvedValueOnce(EVENT_ID);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked((webhooksRepository as any).createDelivery).mockResolvedValueOnce({
+        ...deliveryRow,
+        status: "pending",
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/admin/webhooks/${WEBHOOK_ID}/test`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(202);
+      expect(vi.mocked(enqueueWebhookDelivery)).toHaveBeenCalledOnce();
     });
   });
 });

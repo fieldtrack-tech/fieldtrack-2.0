@@ -11,6 +11,7 @@
  */
 
 import type { FastifyRequest } from "fastify";
+import { randomUUID } from "crypto";
 import { webhooksRepository } from "./webhooks.repository.js";
 import { validateWebhookUrl, InvalidWebhookUrlError } from "../../utils/url-validator.js";
 import { BadRequestError, NotFoundError, ServiceUnavailableError } from "../../utils/errors.js";
@@ -154,5 +155,69 @@ export const webhooksService = {
     );
 
     return updated;
+  },
+
+  /**
+   * Create and enqueue a synthetic test delivery for a single webhook.
+   */
+  async testWebhook(
+    request: FastifyRequest,
+    webhookId: string,
+  ): Promise<{ delivery_id: string; event_id: string; status: "pending" }> {
+    const webhook = await webhooksRepository.findWebhookSecretById(request, webhookId);
+    if (!webhook) throw new NotFoundError("Webhook not found");
+
+    if (!shouldStartWorkers()) {
+      throw new ServiceUnavailableError(
+        "Workers not enabled — webhook delivery requires WORKERS_ENABLED=true",
+      );
+    }
+
+    const eventId = randomUUID();
+    const eventType = "webhook.test";
+    const occurredAt = new Date().toISOString();
+
+    await webhooksRepository.createEvent(request, eventId, eventType, {
+      id: eventId,
+      type: eventType,
+      version: 1,
+      occurred_at: occurredAt,
+      organization_id: request.organizationId,
+      data: {
+        webhook_id: webhook.id,
+        test: true,
+        message: "FieldTrack test webhook delivery",
+      },
+    });
+
+    const delivery = await webhooksRepository.createDelivery(
+      request,
+      webhook.id,
+      eventId,
+      eventType,
+    );
+
+    await enqueueWebhookDelivery(
+      {
+        delivery_id: delivery.id,
+        webhook_id: webhook.id,
+        event_id: eventId,
+        url: webhook.url,
+        secret: webhook.secret,
+        attempt_number: 1,
+      },
+      0,
+    );
+
+    request.log.info(
+      { webhookId: webhook.id, deliveryId: delivery.id, eventId },
+      "webhooks.service: test delivery enqueued",
+    );
+
+    return {
+      delivery_id: delivery.id,
+      event_id: eventId,
+      status: "pending",
+    };
   },
 };
