@@ -611,6 +611,29 @@ export function getEnv(): EnvConfig {
 }
 
 /**
+ * Explicit startup guard for critical infrastructure environment variables.
+ *
+ * Zod's schema validation (getEnv()) already catches any missing or invalid
+ * var and throws a descriptive error. This function serves as a secondary,
+ * human-readable defence-in-depth check — it makes the exact critical subset
+ * visible in the startup log and throws a clear message if any var is absent.
+ *
+ * Call once from server.ts after getEnv() succeeds.
+ */
+export function assertEnv(required: string[]): void {
+  const missing = required.filter((key) => {
+    const val = process.env[key];
+    return val === undefined || val.trim() === "";
+  });
+  if (missing.length > 0) {
+    throw new Error(
+      `[BOOT] Missing required environment variables: ${missing.join(", ")}. ` +
+      "Check your .env file or container environment.",
+    );
+  }
+}
+
+/**
  * Validated environment configuration.
  *
  * Backed by a Proxy so that validation runs lazily on first property access

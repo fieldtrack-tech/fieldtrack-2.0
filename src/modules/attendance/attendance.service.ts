@@ -68,6 +68,7 @@ export const attendanceService = {
     sseEventBus.emitOrgEvent(request.organizationId, "session.checkin", {
       sessionId: session.id,
       employeeId,
+      session,
     });
 
     emitEvent("employee.checked_in", {
@@ -121,6 +122,7 @@ export const attendanceService = {
     sseEventBus.emitOrgEvent(request.organizationId, "session.checkout", {
       sessionId: closedSession.id,
       employeeId,
+      session: closedSession,
     });
 
     emitEvent("employee.checked_out", {

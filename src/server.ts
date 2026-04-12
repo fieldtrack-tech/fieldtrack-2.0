@@ -1,5 +1,5 @@
 import { initTelemetry } from "./tracing.js";
-import { env, getConfigHash, getEnv, logStartupConfig } from "./config/env.js";
+import { env, getConfigHash, getEnv, assertEnv, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { shouldStartWorkers, getExpectedWorkerCount } from "./workers/startup.js";
 import { setBootstrapped } from "./routes/health.js";
@@ -12,6 +12,10 @@ async function start(): Promise<void> {
   // Force environment validation at process startup so production fails fast.
   // Lazy env loading remains useful for tests and CI that do not run server.ts.
   getEnv();
+  // Explicit guard on the three non-negotiable infrastructure variables.
+  // getEnv() already validates all vars via Zod; this call makes the critical
+  // subset visible at a glance in startup logs and stack traces.
+  assertEnv(["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "REDIS_URL"]);
   const configHash = getConfigHash();
 
   const app = await buildApp();

@@ -35,6 +35,9 @@ class MetricsRegistry {
   // Rolling window for average recalculation latency
   private readonly _recalcTimeSamples: number[] = [];
 
+  // Worker health tracking — updated by snapshot worker on each successful job
+  private _lastWorkerJobAt: string | null = null;
+
   // ─── Mutation API ───────────────────────────────────────────────────────────
 
   /**
@@ -62,6 +65,20 @@ class MetricsRegistry {
     if (this._recalcTimeSamples.length > ROLLING_WINDOW_SIZE) {
       this._recalcTimeSamples.shift();
     }
+  }
+
+  /**
+   * Record a successful worker job completion.
+   * Called by the snapshot worker after each processed job so that
+   * /internal/snapshot-health can surface worker liveness.
+   */
+  recordWorkerJob(): void {
+    this._lastWorkerJobAt = new Date().toISOString();
+  }
+
+  /** ISO timestamp of the last successful worker job, or null if none yet. */
+  get lastWorkerJobAt(): string | null {
+    return this._lastWorkerJobAt;
   }
 
   // ─── Read API ───────────────────────────────────────────────────────────────

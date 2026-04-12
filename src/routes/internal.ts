@@ -3,6 +3,7 @@ import { metrics } from "../utils/metrics.js";
 import { getQueueDepth } from "../workers/distance.queue.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireRole } from "../middleware/role-guard.js";
+import { areWorkersStarted } from "../workers/startup.js";
 
 export async function internalRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -41,6 +42,14 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
    * Exposed only on internal network (no external DNS alias) for operator dashboards.
    *
    * Requires: JWT authentication + ADMIN role. No external exposure.
+   *
+   * NOTE — two queue-status endpoints coexist by design (Option A, REORGANIZATION_PLAN P3-2):
+   *   • GET /internal/queues/status  (this endpoint) — Prometheus / operator scrape target.
+   *     Minimal contract: { queues: { distance, analytics } } with depth/active/delayed.
+   *     Intentionally kept lean for programmatic consumers (alerting rules, scripts).
+   *   • GET /admin/queues            — UI-facing endpoint consumed by the admin queue monitor.
+   *     Richer contract: includes webhook queue, DLQ depth, combined backlog view.
+   * Both endpoints serve different consumers and should NOT be merged.
    *
    * Response shape:
    * {
@@ -174,12 +183,18 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
         const anyStale = Object.values(tables).some((t) => t.stale);
         const overallStatus = anyStale ? "degraded" : "healthy";
 
+        const workersHealthy = areWorkersStarted();
+
         reply.status(anyStale ? 503 : 200).send({
           success: true,
           data: {
             status: overallStatus,
             checkedAt: new Date().toISOString(),
             tables,
+            workers: {
+              healthy: workersHealthy,
+              lastProcessedAt: metrics.lastWorkerJobAt,
+            },
           },
         });
       } catch (error) {
@@ -187,6 +202,101 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
         reply.status(500).send({
           success: false,
           error: "Failed to fetch snapshot health",
+          requestId: request.id,
+        });
+      }
+    },
+  );
+
+  /**
+   * GET /internal/ready-deep
+   *
+   * Admin-only deep readiness probe. Checks live connectivity to all three
+   * infrastructure dependencies: Redis (via BullMQ ping), Supabase (DB row
+   * select), and worker liveness (areWorkersStarted + lastWorkerJobAt).
+   *
+   * Unlike /ready (public, cached, 3s TTL), this endpoint runs a fresh probe
+   * on every call and requires ADMIN auth — it is intended for operator
+   * dashboards and on-call runbooks, not for automated load balancers.
+   *
+   * Response shape:
+   * {
+   *   success: true,
+   *   data: {
+   *     status: "healthy" | "degraded",
+   *     checkedAt: string,
+   *     checks: {
+   *       redis:    { status: "ok" | "error", latencyMs: number, error?: string }
+   *       database: { status: "ok" | "error", latencyMs: number, error?: string }
+   *       workers:  { status: "ok" | "error" | "skipped", healthy: boolean, lastProcessedAt: string | null }
+   *     }
+   *   }
+   * }
+   */
+  app.get(
+    "/internal/ready-deep",
+    {
+      preValidation: [authenticate, requireRole("ADMIN")],
+    },
+    async (request, reply): Promise<void> => {
+      try {
+        const { supabaseServiceClient: supabase } = await import("../config/supabase.js");
+        const { distanceQueue } = await import("../workers/distance.queue.js");
+        const { shouldStartWorkers } = await import("../workers/startup.js");
+
+        type CheckResult = { status: "ok" | "error"; latencyMs: number; error?: string };
+
+        const [redisResult, dbResult] = await Promise.allSettled([
+          (async (): Promise<CheckResult> => {
+            const t0 = Date.now();
+            const client = await distanceQueue.waitUntilReady();
+            await client.ping();
+            return { status: "ok", latencyMs: Date.now() - t0 };
+          })(),
+          (async (): Promise<CheckResult> => {
+            const t0 = Date.now();
+            const { error } = await supabase
+              .from("organizations")
+              .select("id")
+              .limit(1);
+            if (error) throw error;
+            return { status: "ok", latencyMs: Date.now() - t0 };
+          })(),
+        ]);
+
+        const redis: CheckResult = redisResult.status === "fulfilled"
+          ? redisResult.value
+          : { status: "error", latencyMs: 0, error: String((redisResult as PromiseRejectedResult).reason) };
+
+        const database: CheckResult = dbResult.status === "fulfilled"
+          ? dbResult.value
+          : { status: "error", latencyMs: 0, error: String((dbResult as PromiseRejectedResult).reason) };
+
+        const workersRunning = areWorkersStarted();
+        const workers = {
+          status: !shouldStartWorkers()
+            ? ("skipped" as const)
+            : workersRunning ? ("ok" as const) : ("error" as const),
+          healthy: workersRunning,
+          lastProcessedAt: metrics.lastWorkerJobAt,
+        };
+
+        const allOk = redis.status === "ok" && database.status === "ok" && workers.status !== "error";
+        const overallStatus = allOk ? "healthy" : "degraded";
+
+        reply.status(allOk ? 200 : 503).send({
+          success: true,
+          data: {
+            status: overallStatus,
+            checkedAt: new Date().toISOString(),
+            checks: { redis, database, workers },
+          },
+        });
+      } catch (error) {
+        request.log.error({ error }, "Failed to run deep readiness check");
+        reply.status(500).send({
+          success: false,
+          error: "Failed to run deep readiness check",
           requestId: request.id,
         });
       }

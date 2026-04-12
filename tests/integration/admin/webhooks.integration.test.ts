@@ -26,6 +26,7 @@ vi.mock("../../../src/config/redis.js", () => ({
 vi.mock("../../../src/workers/startup.js", () => ({
   shouldStartWorkers: vi.fn().mockReturnValue(true),
   areWorkersStarted: vi.fn().mockReturnValue(true),
+  getExpectedWorkerCount: vi.fn().mockReturnValue(4),
   startWorkers: vi.fn().mockResolvedValue(undefined),
 }));
 

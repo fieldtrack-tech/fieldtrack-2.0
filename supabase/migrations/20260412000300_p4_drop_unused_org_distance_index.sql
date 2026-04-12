@@ -1,0 +1,24 @@
+-- P4-5: Drop unused idx_emp_daily_org_distance
+--
+-- Background: idx_emp_daily_org_distance indexes (organization_id, distance_km DESC)
+-- on employee_daily_metrics. Code analysis shows no query in the API or workers
+-- issues an ORDER BY distance_km at the database level — leaderboard sorting
+-- happens in application code after fetching aggregated rows. The index is
+-- therefore unused for reads and costs one extra write per analytics upsert.
+--
+-- Two other indexes on employee_daily_metrics cover all real read patterns:
+--   idx_emp_daily_org_date   (organization_id, date)  ← analytics date-range scans
+--   uq_employee_daily_metrics UNIQUE (employee_id, date)  ← upsert conflict target
+--
+-- Pre-flight verification (run in production SQL editor before applying):
+--
+--   SELECT indexname, idx_scan, idx_tup_read, idx_tup_fetch
+--   FROM   pg_stat_user_indexes
+--   WHERE  tablename = 'employee_daily_metrics'
+--   ORDER  BY idx_scan DESC;
+--
+-- Apply this migration only if idx_emp_daily_org_distance shows idx_scan ≈ 0.
+-- A non-zero idx_scan means a query path not covered by static analysis is
+-- using the index — investigate before dropping.
+
+DROP INDEX IF EXISTS public.idx_emp_daily_org_distance;
