@@ -69,6 +69,20 @@ export const securityAuthBruteforce = new client.Counter({
   registers: [register],
 });
 
+export const apiKeyRequestsTotal = new client.Counter({
+  name: "api_key_requests_total",
+  help: "Total number of authenticated API key requests",
+  labelNames: ["route", "status_code"],
+  registers: [register],
+});
+
+export const apiKeyErrorsTotal = new client.Counter({
+  name: "api_key_errors_total",
+  help: "Total number of API key requests resulting in client/server errors",
+  labelNames: ["route", "status_code"],
+  registers: [register],
+});
+
 // ─── Phase 21: Analytics Worker Metrics ──────────────────────────────────────
 
 /**
@@ -312,6 +326,13 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     if (route === "/metrics") {
       httpRequestsInFlight.dec();
       return;
+    }
+
+    if (request.authType === "api_key") {
+      apiKeyRequestsTotal.labels(route, String(reply.statusCode)).inc();
+      if (reply.statusCode >= 400) {
+        apiKeyErrorsTotal.labels(route, String(reply.statusCode)).inc();
+      }
     }
 
     httpRequestsTotal

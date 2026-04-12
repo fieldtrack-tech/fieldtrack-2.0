@@ -16,6 +16,7 @@ import abuseLoggingPlugin from "./plugins/security/abuse-logging.plugin.js";
 // Phase 19: OpenAPI documentation
 import openApiPlugin from "./plugins/openapi.plugin.js";
 import { registerZod } from "./plugins/zod.plugin.js";
+import { apiKeysRepository } from "./modules/api-keys/api-keys.repository.js";
 // @fastify/compress intentionally removed: on Node.js >= 22.15, the
 // peek-stream dependency (fastify-compress-#355) causes silent onSend
 // hook failures that return an empty body with status 200.
@@ -103,6 +104,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   // immediately visible in Grafana/Loki without a query.
   // Emits ERROR for responses slower than 2000 ms — indicates a serious problem.
   app.addHook("onResponse", async (request, reply) => {
+    if (request.authType === "api_key" && request.apiKeyId && reply.statusCode >= 400) {
+      void apiKeysRepository.markError(request.apiKeyId).catch(() => undefined);
+    }
+
     const ms = Math.round(reply.elapsedTime);
     const logPayload = {
       requestId: request.id,
@@ -113,6 +118,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Populated only for authenticated routes — undefined otherwise
       userId: (request as { user?: { sub?: string } }).user?.sub,
       organizationId: (request as { organizationId?: string }).organizationId,
+      apiKeyId: (request as { apiKeyId?: string }).apiKeyId,
+      authType: (request as { authType?: "jwt" | "api_key" }).authType,
     };
     if (ms > 2_000) {
       request.log.error({ ...logPayload, slow_request: true }, "very_slow_response");

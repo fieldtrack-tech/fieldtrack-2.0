@@ -21,6 +21,7 @@ import { auditLogRoutes } from "../modules/admin/audit-log.routes.js";
 import { adminQueuesRoutes } from "../modules/admin/queues.routes.js";
 import { adminRetryIntentsRoutes } from "../modules/admin/retry-intents.routes.js";
 import { systemHealthRoutes } from "../modules/admin/system-health.routes.js";
+import { apiKeysRoutes } from "../modules/api-keys/api-keys.routes.js";
 
 import { adminForceCheckoutRoutes } from "../modules/admin/force-checkout.routes.js";
 
@@ -48,4 +49,5 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(adminRetryIntentsRoutes);
   await app.register(systemHealthRoutes);
   await app.register(adminForceCheckoutRoutes);
+  await app.register(apiKeysRoutes);
 }

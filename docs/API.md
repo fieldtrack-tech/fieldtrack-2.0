@@ -40,7 +40,11 @@ This can be imported into API clients like Postman, Insomnia, or used for code g
 
 ## Authentication
 
-All API endpoints (except `/health` and `/metrics`) require JWT authentication.
+All API endpoints (except `/health` and `/metrics`) require authentication.
+
+You can authenticate with either:
+- `Authorization: Bearer <jwt>` (standard user auth)
+- `X-API-Key: <api-key>` (scoped integration auth)
 
 ### Obtaining a Token
 
@@ -61,6 +65,43 @@ Include the JWT token in the `Authorization` header of all API requests:
 
 ```
 Authorization: Bearer <your-jwt-token>
+```
+
+### Using an API Key
+
+For machine-to-machine integrations, admins can create scoped API keys from the
+Admin UI (`/admin/api-keys`) and then call endpoints with:
+
+```
+X-API-Key: <your-api-key>
+```
+
+Supported scopes:
+- `read:employees`
+- `read:sessions`
+- `write:expenses`
+- `admin:all`
+
+### API Key Examples
+
+**cURL**
+
+```bash
+curl -X GET "http://localhost:4000/admin/sessions?page=1&limit=20" \
+  -H "X-API-Key: ft_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+**fetch (Node/Browser)**
+
+```javascript
+const response = await fetch("https://api.fieldtrack.app/admin/employees", {
+  method: "GET",
+  headers: {
+    "X-API-Key": "ft_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  },
+});
+
+const result = await response.json();
 ```
 
 ### Authenticating in Swagger UI

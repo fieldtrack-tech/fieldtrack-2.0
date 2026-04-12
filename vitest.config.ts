@@ -11,7 +11,7 @@ export default defineConfig({
     // Run env-setup before every test file so required env vars are set
     // before any project module is imported.
     setupFiles: ["./tests/setup/env-setup.ts", "./tests/setup/mock-jwt-verifier.ts"],
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "src/**/__tests__/**/*.test.ts"],
     // Reset mock call history (but not implementations) between tests.
     clearMocks: true,
     coverage: {

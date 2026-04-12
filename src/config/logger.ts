@@ -29,6 +29,17 @@ function otelMixin(): Record<string, string | number> {
 const developmentLogger: LoggerConfig = {
     level: "debug",
     mixin: otelMixin,
+    redact: {
+        paths: [
+            "req.headers.authorization",
+            "req.headers.x-api-key",
+            "request.headers.authorization",
+            "request.headers.x-api-key",
+            "headers.authorization",
+            "headers.x-api-key",
+        ],
+        censor: "[REDACTED]",
+    },
     transport: {
         target: "pino-pretty",
         options: {
@@ -42,11 +53,33 @@ const developmentLogger: LoggerConfig = {
 const productionLogger: LoggerConfig = {
     level: "info",
     mixin: otelMixin,
+    redact: {
+        paths: [
+            "req.headers.authorization",
+            "req.headers.x-api-key",
+            "request.headers.authorization",
+            "request.headers.x-api-key",
+            "headers.authorization",
+            "headers.x-api-key",
+        ],
+        censor: "[REDACTED]",
+    },
 };
 
 const structuredDebugLogger: LoggerConfig = {
     level: "debug",
     mixin: otelMixin,
+    redact: {
+        paths: [
+            "req.headers.authorization",
+            "req.headers.x-api-key",
+            "request.headers.authorization",
+            "request.headers.x-api-key",
+            "headers.authorization",
+            "headers.x-api-key",
+        ],
+        censor: "[REDACTED]",
+    },
 };
 
 function canUsePrettyTransport(): boolean {

@@ -2,9 +2,12 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { trace, context } from "@opentelemetry/api";
 import { validate as uuidValidate } from "uuid";
 import { jwtPayloadSchema } from "../types/jwt.js";
-import { AppError, UnauthorizedError } from "../utils/errors.js";
+import { AppError, ForbiddenError, UnauthorizedError } from "../utils/errors.js";
 import { fail } from "../utils/response.js";
 import { verifySupabaseToken } from "../auth/jwtVerifier.js";
+import { apiKeysRepository } from "../modules/api-keys/api-keys.repository.js";
+import { hashApiKey, isApiKeyFormat, safeHashEquals } from "../modules/api-keys/api-keys.security.js";
+import { enforceApiKeyScope } from "./api-key-scope.js";
 
 /**
  * Layer 2 — Authentication Middleware
@@ -26,6 +29,38 @@ export async function authenticate(
 ): Promise<void> {
     try {
         const authHeader = request.headers.authorization;
+        const rawApiKeyHeader = request.headers["x-api-key"];
+        const apiKeyHeader = typeof rawApiKeyHeader === "string" ? rawApiKeyHeader.trim() : undefined;
+
+        if (apiKeyHeader && !authHeader) {
+            if (!isApiKeyFormat(apiKeyHeader)) {
+                throw new UnauthorizedError("Invalid API key format", "INVALID_API_KEY");
+            }
+
+            const keyHash = hashApiKey(apiKeyHeader);
+            const keyRecord = await apiKeysRepository.findByHash(keyHash);
+
+            if (!keyRecord || !safeHashEquals(keyRecord.key_hash, keyHash)) {
+                throw new UnauthorizedError("Invalid API key", "INVALID_API_KEY");
+            }
+
+            request.user = {
+                sub: `api_key:${keyRecord.id}`,
+                role: "ADMIN",
+                organization_id: keyRecord.organization_id,
+            };
+            request.organizationId = keyRecord.organization_id;
+            request.employeeId = undefined;
+            request.authType = "api_key";
+            request.apiKeyId = keyRecord.id;
+            request.apiKeyScopes = keyRecord.scopes;
+
+            const routePath = request.routeOptions.url ?? request.url;
+            enforceApiKeyScope(request.method, routePath, keyRecord.scopes);
+            void apiKeysRepository.markUsed(keyRecord.id).catch(() => undefined);
+
+            return;
+        }
 
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
             throw new UnauthorizedError("Missing or malformed Authorization header");
@@ -110,6 +145,9 @@ export async function authenticate(
         request.user           = result.data;
         request.organizationId = result.data.organization_id;
         request.employeeId     = hookEmployeeId ?? undefined;
+        request.authType       = "jwt";
+        request.apiKeyId       = undefined;
+        request.apiKeyScopes   = undefined;
 
         const span = trace.getSpan(context.active());
         if (span) {
@@ -123,6 +161,14 @@ export async function authenticate(
 
         void reply.status(err.statusCode).send(fail(err.message, request.id, (err as AppError).code, (err as AppError).details));
         return;
+    }
+}
+
+export async function requireJwtAuth(
+    request: FastifyRequest,
+): Promise<void> {
+    if (request.authType !== "jwt") {
+        throw new ForbiddenError("This endpoint requires JWT user authentication", "JWT_REQUIRED");
     }
 }
 
