@@ -21,9 +21,31 @@ import type {
 } from "./webhooks.schema.js";
 
 const WEBHOOK_DELIVERY_COLUMNS =
-  "id, webhook_id, event_id, organization_id, status, attempt_count, response_status, response_body, last_attempt_at, next_retry_at, created_at";
+  "id, webhook_id, event_id, event_type, organization_id, status, attempt_count, response_status, response_body, last_attempt_at, next_retry_at, created_at";
 const WEBHOOK_DLQ_COLUMNS =
   "id, webhook_id, organization_id, event_id, event_type, payload, status, attempt_count, response_status, response_body, last_error, next_retry_at, last_attempt_at, created_at";
+
+type DeliveryRow = {
+  id: string;
+  webhook_id: string;
+  event_id: string;
+  event_type: string | null;
+  organization_id: string;
+  status: "pending" | "success" | "failed";
+  attempt_count: number;
+  response_status: number | null;
+  response_body: string | null;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  created_at: string;
+};
+
+function mapDeliveryRow(row: DeliveryRow): WebhookDelivery {
+  return {
+    ...row,
+    response_code: row.response_status,
+  } as WebhookDelivery;
+}
 
 // ─── Webhook CRUD ─────────────────────────────────────────────────────────────
 
@@ -134,7 +156,8 @@ export const webhooksRepository = {
     const { data, error, count } = await q;
 
     if (error) throw new Error(`Failed to list deliveries: ${error.message}`);
-    return { data: (data ?? []) as WebhookDelivery[], total: count ?? 0 };
+    const rows = (data ?? []) as DeliveryRow[];
+    return { data: rows.map(mapDeliveryRow), total: count ?? 0 };
   },
 
   /**
@@ -215,7 +238,8 @@ export const webhooksRepository = {
       .maybeSingle();
 
     if (error) throw new Error(`Failed to fetch delivery: ${error.message}`);
-    return (data as WebhookDelivery | null) ?? null;
+    const row = (data as DeliveryRow | null) ?? null;
+    return row ? mapDeliveryRow(row) : null;
   },
 
   /**
@@ -249,6 +273,56 @@ export const webhooksRepository = {
       .single();
 
     if (error) throw new Error(`Failed to reset delivery: ${error.message}`);
-    return data as WebhookDelivery;
+    return mapDeliveryRow(data as DeliveryRow);
+  },
+
+  /**
+   * Persist a synthetic webhook event payload used by POST /webhooks/:id/test.
+   */
+  async createEvent(
+    request: FastifyRequest,
+    eventId: string,
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): Promise<string> {
+    const { data, error } = await supabase
+      .from("webhook_events")
+      .insert({
+        id: eventId,
+        organization_id: request.organizationId,
+        event_type: eventType,
+        payload,
+      })
+      .select("id")
+      .single();
+
+    if (error) throw new Error(`Failed to create webhook event: ${error.message}`);
+    return data.id as string;
+  },
+
+  /**
+   * Create a pending delivery row for a specific webhook and event.
+   */
+  async createDelivery(
+    request: FastifyRequest,
+    webhookId: string,
+    eventId: string,
+    eventType: string,
+  ): Promise<WebhookDelivery> {
+    const { data, error } = await supabase
+      .from("webhook_deliveries")
+      .insert({
+        webhook_id: webhookId,
+        event_id: eventId,
+        event_type: eventType,
+        organization_id: request.organizationId,
+        status: "pending",
+        attempt_count: 0,
+      })
+      .select(WEBHOOK_DELIVERY_COLUMNS)
+      .single();
+
+    if (error) throw new Error(`Failed to create webhook delivery: ${error.message}`);
+    return mapDeliveryRow(data as DeliveryRow);
   },
 };

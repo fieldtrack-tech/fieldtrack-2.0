@@ -113,6 +113,7 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
         { name: "expenses", description: "Expense reporting and management" },
         { name: "analytics", description: "Business analytics and reporting" },
         { name: "admin", description: "Administrative operations (ADMIN role required)" },
+        { name: "api-keys", description: "API key management and scoped external access" },
         { name: "dashboard", description: "Employee dashboard and personal statistics" },
         { name: "profile", description: "Employee profile and activity status" },
       ],
@@ -125,6 +126,12 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
             description:
               "JWT token obtained from authentication service. " +
               "Include in Authorization header: `Bearer <token>`",
+          },
+          ApiKeyAuth: {
+            type: "apiKey",
+            in: "header",
+            name: "X-API-Key",
+            description: "Scoped API key for external integrations",
           },
         },
         schemas: {
@@ -243,7 +250,7 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
           },
         },
       },
-      security: [{ BearerAuth: [] }],
+      security: [{ BearerAuth: [] }, { ApiKeyAuth: [] }],
       externalDocs: {
         url: "https://github.com/fieldtrack-tech/fieldtrack-2.0",
         description: "Find more info here",

@@ -9,7 +9,9 @@ Every outbound webhook request from FieldTrack includes security headers that al
 | Header | Example value | Purpose |
 |---|---|---|
 | `X-FieldTrack-Signature` | `sha256=a3f1c8...` | HMAC-SHA256 of the signing body (see below) |
+| `X-Webhook-Signature` | `sha256=a3f1c8...` | Compatibility alias of `X-FieldTrack-Signature` |
 | `X-FieldTrack-Timestamp` | `1711618200` | Unix timestamp **in seconds** at delivery time |
+| `X-Webhook-Timestamp` | `1711618200` | Compatibility alias of `X-FieldTrack-Timestamp` |
 | `X-FieldTrack-Event` | `employee.checked_in` | Logical event type for routing |
 | `X-FieldTrack-Delivery-Id` | `1b2f...-uuid` | Unique delivery attempt id for idempotency / replay dedupe |
 

@@ -87,4 +87,17 @@ export const webhooksController = {
       handleError(error, request, reply, "Failed to retry delivery");
     }
   },
+
+  async testWebhook(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ): Promise<void> {
+    try {
+      const { id } = request.params;
+      const result = await webhooksService.testWebhook(request, id);
+      reply.status(202).send(ok(result));
+    } catch (error) {
+      handleError(error, request, reply, "Failed to send test webhook");
+    }
+  },
 };

@@ -129,6 +129,7 @@ async function createAndEnqueueDelivery(
     .insert({
       webhook_id:      webhook.id,
       event_id:        eventId,
+      event_type:      eventType,
       organization_id: orgId,
       status:          "pending",
       attempt_count:   0,
@@ -201,6 +202,8 @@ async function createAndEnqueueDelivery(
 // ─── Event bus subscription ───────────────────────────────────────────────────
 
 const EVENT_NAMES: ReadonlyArray<EventName> = [
+  "session.checkin",
+  "session.checkout",
   "employee.checked_in",
   "employee.checked_out",
   "expense.created",

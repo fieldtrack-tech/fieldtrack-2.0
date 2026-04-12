@@ -38,6 +38,8 @@ import { shouldStartWorkers } from "../../workers/startup.js";
 const ORG_RATE_LIMIT_MAX        = 5_000;
 /** Sliding-window size in milliseconds. */
 const ORG_RATE_LIMIT_WINDOW_MS  = 60_000; // 1 minute
+const API_KEY_RATE_LIMIT_MAX       = 600;
+const API_KEY_RATE_LIMIT_WINDOW_MS = 60_000;
 
 /**
  * Lua script: atomic sliding-window check + record using a sorted set.
@@ -74,12 +76,15 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
         // Redis-backed tier because the counter is per-process (not shared
         // across replicas), making per-user tracking less accurate.
         fastify.log.warn(
-            "security-rate-limit plugin using in-memory fallback (Redis not provisioned) — limits: 200 req/min",
+            "security-rate-limit plugin using in-memory fallback (Redis not provisioned) — limits: 1200 req/min + api-key 600 req/min",
         );
+
+        const apiKeyHits = new Map<string, number[]>();
+
         await fastify.register(fastifyRateLimit, {
             global: true,
             hook: "preHandler",
-            max: 200,
+            max: 1200,
             timeWindow: "1 minute",
             allowList: ["127.0.0.1", "::1"],
             errorResponseBuilder: (_request, context) => ({
@@ -88,7 +93,28 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
                 retryAfter: context.after,
             }),
         });
-        fastify.log.info("security-rate-limit plugin registered (in-memory fallback, 200 req/min)");
+
+        fastify.addHook("preHandler", async (request, reply) => {
+            const apiKeyId = (request as { apiKeyId?: string }).apiKeyId;
+            if (!apiKeyId) return;
+
+            const nowMs = Date.now();
+            const cutoff = nowMs - API_KEY_RATE_LIMIT_WINDOW_MS;
+            const bucket = apiKeyHits.get(apiKeyId) ?? [];
+            const kept = bucket.filter((ts) => ts > cutoff);
+            kept.push(nowMs);
+            apiKeyHits.set(apiKeyId, kept);
+
+            if (kept.length > API_KEY_RATE_LIMIT_MAX) {
+                void reply.status(429).send({
+                    success: false,
+                    error: "API key rate limit exceeded",
+                    retryAfter: `${Math.ceil(API_KEY_RATE_LIMIT_WINDOW_MS / 1000)}s`,
+                });
+            }
+        });
+
+        fastify.log.info("security-rate-limit plugin registered (in-memory fallback, user:1200 req/min, api-key:600 req/min)");
         return;
     }
 
@@ -127,6 +153,51 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
     const slidingWindowSha = await orgRlRedis.script("LOAD", SLIDING_WINDOW_LUA) as string;
 
     fastify.addHook("preHandler", async (request, reply) => {
+        const apiKeyId = (request as { apiKeyId?: string }).apiKeyId;
+        if (apiKeyId) {
+            const nowMs = Date.now();
+            const member = `${nowMs}:${Math.random().toString(36).slice(2)}`;
+            const key = `rl:api-key:${apiKeyId}`;
+            const ttlMs = Math.round(
+                API_KEY_RATE_LIMIT_WINDOW_MS * 2 + API_KEY_RATE_LIMIT_WINDOW_MS * 0.1 * Math.random(),
+            );
+
+            try {
+                const keyCount = await orgRlRedis
+                    .evalsha(
+                        slidingWindowSha,
+                        1,
+                        key,
+                        String(nowMs),
+                        String(API_KEY_RATE_LIMIT_WINDOW_MS),
+                        member,
+                        String(ttlMs),
+                    )
+                    .catch(() =>
+                        orgRlRedis.eval(
+                            SLIDING_WINDOW_LUA,
+                            1,
+                            key,
+                            String(nowMs),
+                            String(API_KEY_RATE_LIMIT_WINDOW_MS),
+                            member,
+                            String(ttlMs),
+                        ),
+                    ) as number;
+
+                if (keyCount > API_KEY_RATE_LIMIT_MAX) {
+                    void reply.status(429).send({
+                        success: false,
+                        error: "API key rate limit exceeded",
+                        retryAfter: `${Math.ceil(API_KEY_RATE_LIMIT_WINDOW_MS / 1000)}s`,
+                    });
+                    return;
+                }
+            } catch {
+                return;
+            }
+        }
+
         const orgId = (request as { organizationId?: string }).organizationId;
         if (!orgId) return;
         if (request.ip === "127.0.0.1" || request.ip === "::1") return;

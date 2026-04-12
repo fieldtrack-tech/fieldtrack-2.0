@@ -64,6 +64,8 @@ import { env } from "../config/env.js";
  * Update this set whenever a new EventDataMap key is added to event-bus.ts.
  */
 const KNOWN_EVENT_TYPES = new Set<string>([
+  "session.checkin",
+  "session.checkout",
   "employee.checked_in",
   "employee.checked_out",
   "expense.created",
@@ -165,8 +167,10 @@ async function deliverWebhook(
       headers: {
         "Content-Type":               "application/json",
         "X-FieldTrack-Signature":     signature,
+        "X-Webhook-Signature":        signature,
         "X-FieldTrack-Event":         eventType,
         "X-FieldTrack-Timestamp":     String(timestamp),
+        "X-Webhook-Timestamp":        String(timestamp),
         "X-FieldTrack-Delivery-Id":   deliveryId,
         "User-Agent":                 "FieldTrack-Webhooks/1.0",
       },
@@ -191,6 +195,7 @@ async function deliverWebhook(
  */
 async function markSuccess(
   deliveryId: string,
+  attemptNumber: number,
   responseStatus: number,
   responseBody: string,
 ): Promise<void> {
@@ -198,9 +203,11 @@ async function markSuccess(
     .from("webhook_deliveries")
     .update({
       status:          "success",
+      attempt_count:    attemptNumber,
       response_status:  responseStatus,
       response_body:    responseBody,
       last_attempt_at:  new Date().toISOString(),
+      next_retry_at:    null,
     })
     .eq("id", deliveryId);
 }
@@ -432,7 +439,7 @@ export function startWebhookWorker(app: FastifyInstance): Worker | null {
         const succeeded = status >= 200 && status < 300;
 
         if (succeeded) {
-          await markSuccess(delivery_id, status, body);
+          await markSuccess(delivery_id, attempt_number, status, body);
           await recordDeliverySuccess(webhook_id, getCbRedis(), app.log);
           webhookDeliveriesTotal
             .labels({ event_type: normalizeEventType(eventType), status: "success" })
