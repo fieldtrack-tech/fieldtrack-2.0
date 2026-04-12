@@ -27,6 +27,7 @@
  */
 
 import { Worker } from "bullmq";
+import { metrics } from "../utils/metrics.js";
 import type { Job } from "bullmq";
 import type { FastifyInstance } from "fastify";
 import { redisConnectionOptions } from "../config/redis.js";
@@ -156,6 +157,11 @@ async function handleCheckIn(
   }
 
   // 2. Insert into active_users (upsert: re-check_in replaces stale session)
+  // ⚠️  SAFETY: Do NOT remove the active_users table or this write without first
+  // confirming zero direct Supabase client reads via pg_stat_user_tables in
+  // production (SELECT seq_scan, idx_scan FROM pg_stat_user_tables WHERE
+  // relname = 'active_users').  RLS policies allow employee-self + admin reads
+  // that are invisible to static code analysis.
   const { error: activeErr } = await supabase
     .from("active_users")
     .upsert(
@@ -203,6 +209,7 @@ async function handleCheckOut(
   }
 
   // 2. Remove from active_users
+  // ⚠️  SAFETY: See CHECK_IN handler above — do not remove active_users writes.
   const { error: deleteErr } = await supabase
     .from("active_users")
     .delete()
@@ -357,6 +364,7 @@ export function startSnapshotWorker(app: FastifyInstance): void {
       }
 
       const durationMs = Date.now() - t0;
+      metrics.recordWorkerJob();
       app.log.info(
         {
           jobId:   job.id,

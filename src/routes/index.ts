@@ -17,6 +17,12 @@ import { webhookDlqRoutes } from "../modules/admin/webhook-dlq.routes.js";
 import { eventsRoutes } from "./events.routes.js";
 import { webhooksRoutes } from "../modules/webhooks/webhooks.routes.js";
 import { authRoutes } from "../modules/auth/auth.routes.js";
+import { auditLogRoutes } from "../modules/admin/audit-log.routes.js";
+import { adminQueuesRoutes } from "../modules/admin/queues.routes.js";
+import { adminRetryIntentsRoutes } from "../modules/admin/retry-intents.routes.js";
+import { systemHealthRoutes } from "../modules/admin/system-health.routes.js";
+
+import { adminForceCheckoutRoutes } from "../modules/admin/force-checkout.routes.js";
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(healthRoutes);
@@ -37,4 +43,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(webhookDlqRoutes);
   await app.register(eventsRoutes);
   await app.register(webhooksRoutes);
+  await app.register(auditLogRoutes);
+  await app.register(adminQueuesRoutes);
+  await app.register(adminRetryIntentsRoutes);
+  await app.register(systemHealthRoutes);
+  await app.register(adminForceCheckoutRoutes);
 }
