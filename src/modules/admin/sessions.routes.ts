@@ -5,17 +5,14 @@ import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceService } from "../attendance/attendance.service.js";
 import { handleError, paginated } from "../../utils/response.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
+import { orgSessionsQuerySchema } from "../attendance/attendance.schema.js";
 
 // ─── Query schema ─────────────────────────────────────────────────────────────
 
 // TODO (future phase): replace offset pagination with cursor-based pagination
 // to support large datasets without heavy DB scans.
-const adminSessionsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
+const adminSessionsQuerySchema = orgSessionsQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  status: z.enum(["all", "active", "recent", "inactive"]).default("all"),
-  /** Filter by employee UUID — returns full attendance_sessions history for that employee. */
-  employee_id: z.string().uuid().optional(),
 });
 
 // ─── Route registration ───────────────────────────────────────────────────────

@@ -292,7 +292,37 @@ describe("Attendance Integration Tests", () => {
         TEST_EMPLOYEE_ID,
         2,
         5,
+        "all",
       );
+    });
+
+    it("accepts a valid ?status filter and forwards it to the repository", async () => {
+      vi.mocked(attendanceRepository.findSessionsByUser).mockResolvedValue({ data: [], total: 0 } as never);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/attendance/my-sessions?status=active",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(attendanceRepository.findSessionsByUser).toHaveBeenCalledWith(
+        expect.anything(),
+        TEST_EMPLOYEE_ID,
+        1,
+        20,
+        "active",
+      );
+    });
+
+    it("returns 400 for uppercase session status filters", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/attendance/my-sessions?status=ACTIVE",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+
+      expect(res.statusCode).toBe(400);
     });
 
     it("rejects an invalid limit above 100", async () => {
@@ -350,6 +380,7 @@ describe("Attendance Integration Tests", () => {
         TEST_EMPLOYEE_ID,
         expect.any(Number),
         expect.any(Number),
+        "all",
       );
     });
 

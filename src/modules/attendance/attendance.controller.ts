@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { attendanceService } from "./attendance.service.js";
-import { paginationSchema } from "./attendance.schema.js";
+import { mySessionsQuerySchema } from "./attendance.schema.js";
 import { paginated, ok, handleError } from "../../utils/response.js";
 
 /**
@@ -27,8 +27,13 @@ export const attendanceController = {
 
     async getMySessions(request: FastifyRequest, reply: FastifyReply): Promise<void> {
         try {
-            const parsed = paginationSchema.parse(request.query);
-            const result = await attendanceService.getMySessions(request, parsed.page, parsed.limit);
+            const parsed = mySessionsQuerySchema.parse(request.query);
+            const result = await attendanceService.getMySessions(
+                request,
+                parsed.page,
+                parsed.limit,
+                parsed.status
+            );
             const response = paginated(result.data, parsed.page, parsed.limit, result.total);
             const payloadBytes = Buffer.byteLength(JSON.stringify(response));
             request.log.info(

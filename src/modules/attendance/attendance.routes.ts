@@ -4,7 +4,7 @@ import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
-import { paginationSchema } from "./attendance.schema.js";
+import { mySessionsQuerySchema } from "./attendance.schema.js";
 
 // ─── Shared response schema ────────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["attendance"],
-        querystring: paginationSchema,
+        querystring: mySessionsQuerySchema,
       },
       // preValidation ensures 401 fires before querystring validation
       preValidation: [authenticate],
