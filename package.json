@@ -37,7 +37,7 @@
     "@supabase/supabase-js": "^2.99.0",
     "bullmq": "^5.70.4",
     "dotenv": "^17.3.1",
-    "fastify": "^5.8.3",
+    "fastify": "^5.8.5",
     "fastify-plugin": "^5.1.0",
     "fastify-type-provider-zod": "^6.1.0",
     "ioredis": "^5.10.0",
@@ -63,5 +63,8 @@
   "optionalDependencies": {
     "@rollup/rollup-darwin-x64": "^4.0.0",
     "@rollup/rollup-linux-x64-gnu": "^4.0.0"
+  },
+  "overrides": {
+    "protobufjs": "7.5.5"
   }
 }
