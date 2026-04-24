@@ -273,6 +273,7 @@ describe("Expenses Integration Tests", () => {
         TEST_EMPLOYEE_ID,
         expect.any(Number),
         expect.any(Number),
+        "all",
       );
     });
 
@@ -293,7 +294,36 @@ describe("Expenses Integration Tests", () => {
         TEST_EMPLOYEE_ID,
         2,
         10,
+        "all",
       );
+    });
+
+    it("accepts a valid ?status filter and forwards it to the repository", async () => {
+      vi.mocked(expensesRepository.findExpensesByUser).mockResolvedValue({ data: [], total: 0 } as never);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/expenses/my?status=PENDING",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(expensesRepository.findExpensesByUser).toHaveBeenCalledWith(
+        expect.anything(),
+        TEST_EMPLOYEE_ID,
+        1,
+        50,
+        "PENDING",
+      );
+    });
+
+    it("returns 400 for an invalid ?status value", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/expenses/my?status=pending",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+      expect(res.statusCode).toBe(400);
     });
 
     it("returns 400 for limit above 1000", async () => {
@@ -432,6 +462,7 @@ describe("Expenses Integration Tests", () => {
         TEST_EMPLOYEE_ID,
         expect.any(Number),
         expect.any(Number),
+        "all",
       );
     });
   });

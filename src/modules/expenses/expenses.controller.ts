@@ -44,6 +44,7 @@ export const expensesController = {
         request,
         parsed.page,
         parsed.limit,
+        parsed.status,
       );
       const response = paginated(result.data, parsed.page, parsed.limit, result.total);
       const payloadBytes = Buffer.byteLength(JSON.stringify(response));

@@ -239,10 +239,11 @@ export const attendanceService = {
     request: FastifyRequest,
     page: number,
     limit: number,
+    status?: "all" | "active" | "recent" | "inactive",
   ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
     const employeeId = request.employeeId;
     if (!employeeId) return { data: [], total: 0 };
-    return attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
+    return attendanceRepository.findSessionsByUser(request, employeeId, page, limit, status);
   },
 
   async getOrgSessions(
@@ -258,7 +259,7 @@ export const attendanceService = {
     const cacheKey = `org:${request.organizationId}:sessions:${page}:${limit}:${status}:${employeeId ?? "all"}`;
     if (employeeId) {
       return getCached(cacheKey, 30, () =>
-        attendanceRepository.findSessionsByUser(request, employeeId, page, limit));
+        attendanceRepository.findSessionsByUser(request, employeeId, page, limit, status as "all" | "active" | "recent" | "inactive" | undefined));
     }
     return getCached(cacheKey, 30, () =>
       attendanceRepository.findLatestSessionPerEmployee(request, page, limit, status));

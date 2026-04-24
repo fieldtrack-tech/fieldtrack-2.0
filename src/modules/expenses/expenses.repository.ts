@@ -81,16 +81,28 @@ export const expensesRepository = {
     employeeId: string,
     page: number,
     limit: number,
+    status: string = "all",
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
     // Phase 30: removed employees join (caller already knows their own identity).
     // count:"estimated" eliminates the shadow SELECT COUNT(*) on every list call.
     // Index idx_expenses_org_emp_submitted (org_id, emp_id, submitted_at DESC)
     // covers both the WHERE clause and the ORDER BY in a single index scan.
+    let query = orgTable(request, "expenses")
+      .select(EXPENSE_COLS, { count: "estimated" })
+      .eq("employee_id", employeeId);
+
+    if (status !== "all") {
+      if (status === "processed") {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        query = (query as any).in("status", ["APPROVED", "REJECTED"]);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        query = (query as any).eq("status", status);
+      }
+    }
+
     const { data, error, count } = await applyPagination(
-      orgTable(request, "expenses")
-        .select(EXPENSE_COLS, { count: "estimated" })
-        .eq("employee_id", employeeId)
-        .order("submitted_at", { ascending: false }),
+      query.order("submitted_at", { ascending: false }),
       page,
       limit,
     );

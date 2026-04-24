@@ -126,11 +126,12 @@ export const expensesService = {
     request: FastifyRequest,
     page: number,
     limit: number,
+    status: string = "all",
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
     const employeeId = request.employeeId;
     if (!employeeId) return { data: [], total: 0 };
 
-    return expensesRepository.findExpensesByUser(request, employeeId, page, limit);
+    return expensesRepository.findExpensesByUser(request, employeeId, page, limit, status);
   },
 
   /**

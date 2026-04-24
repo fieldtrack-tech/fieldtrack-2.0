@@ -14,9 +14,15 @@ export const paginationSchema = z.object({
 
 export type PaginationQuery = z.infer<typeof paginationSchema>;
 
+export const mySessionsQuerySchema = paginationSchema.extend({
+    status: z.enum(["all", "active", "recent", "inactive"]).default("all"),
+});
+
+export type MySessionsQuery = z.infer<typeof mySessionsQuerySchema>;
+
 export const orgSessionsQuerySchema = paginationSchema.extend({
     status: z.enum(["all", "active", "recent", "inactive"]).default("all"),
-    employee_id: z.string().optional(),
+    employee_id: z.string().uuid().optional(),
 });
 
 export type OrgSessionsQuery = z.infer<typeof orgSessionsQuerySchema>;

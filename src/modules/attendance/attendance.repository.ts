@@ -222,18 +222,34 @@ export const attendanceRepository = {
     employeeId: string,
     page: number,
     limit: number,
+    status?: "all" | "active" | "recent" | "inactive",
   ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
     // Phase 30: removed employees join (employee knows their own identity) and
     // distance_recalculation_status (always null, not used by frontend).
     // count:"estimated" eliminates the shadow SELECT COUNT(*) on every list call.
+    
+    let query = orgTable(request, "attendance_sessions")
+      .select(
+        "id, employee_id, organization_id, checkin_at, checkout_at, total_distance_km, total_duration_seconds, created_at, updated_at",
+        { count: "estimated" },
+      )
+      .eq("employee_id", employeeId);
+
+    // Apply status filter if provided (skip if "all")
+    if (status && status !== "all") {
+      if (status === "active") {
+        query = query.is("checkout_at", null);
+      } else if (status === "recent") {
+        const recentCutoff = new Date(Date.now() - RECENT_WINDOW_MS).toISOString();
+        query = query.not("checkout_at", "is", null).gte("checkout_at", recentCutoff);
+      } else if (status === "inactive") {
+        const recentCutoff = new Date(Date.now() - RECENT_WINDOW_MS).toISOString();
+        query = query.not("checkout_at", "is", null).lt("checkout_at", recentCutoff);
+      }
+    }
+
     const { data, error, count } = await applyPagination(
-      orgTable(request, "attendance_sessions")
-        .select(
-          "id, employee_id, organization_id, checkin_at, checkout_at, total_distance_km, total_duration_seconds, created_at, updated_at",
-          { count: "estimated" },
-        )
-        .eq("employee_id", employeeId)
-        .order("checkin_at", { ascending: false }),
+      query.order("checkin_at", { ascending: false }),
       page,
       limit,
     );
